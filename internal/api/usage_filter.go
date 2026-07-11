@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -37,6 +38,9 @@ func parseUsageTimeFilterQuery(req *http.Request, anchor time.Time) (servicedto.
 	filter.Page = 0
 	filter.PageSize = 0
 	filter.Offset = 0
+	filter.CursorMode = false
+	filter.CursorTimestamp = nil
+	filter.CursorID = 0
 	filter.Model = ""
 	filter.Source = ""
 	filter.AuthIndex = ""
@@ -64,6 +68,32 @@ func parseCustomUsageRangeBoundary(value string, endOfDay bool) (time.Time, erro
 		return date, nil
 	}
 	return time.Parse(time.RFC3339, value)
+}
+
+func encodeUsageEventsCursor(timestamp time.Time, id int64) string {
+	payload := timeutil.NormalizeStorageTime(timestamp).Format(time.RFC3339Nano) + "|" + strconv.FormatInt(id, 10)
+	return base64.RawURLEncoding.EncodeToString([]byte(payload))
+}
+
+func decodeUsageEventsCursor(value string) (time.Time, int64, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return time.Time{}, 0, fmt.Errorf("invalid cursor")
+	}
+	payload := string(decoded)
+	separator := strings.LastIndexByte(payload, '|')
+	if separator <= 0 || separator >= len(payload)-1 {
+		return time.Time{}, 0, fmt.Errorf("invalid cursor")
+	}
+	timestamp, err := time.Parse(time.RFC3339Nano, payload[:separator])
+	if err != nil {
+		return time.Time{}, 0, fmt.Errorf("invalid cursor")
+	}
+	id, err := strconv.ParseInt(payload[separator+1:], 10, 64)
+	if err != nil || id <= 0 {
+		return time.Time{}, 0, fmt.Errorf("invalid cursor")
+	}
+	return timeutil.NormalizeStorageTime(timestamp), id, nil
 }
 
 func parseUsageFilterQuery(req *http.Request, anchor time.Time) (servicedto.UsageFilter, error) {
@@ -101,6 +131,27 @@ func parseUsageFilterQuery(req *http.Request, anchor time.Time) (servicedto.Usag
 		filter.Limit = pageSize
 	}
 	filter.Offset = (filter.Page - 1) * filter.PageSize
+	cursorModeValue := strings.TrimSpace(query.Get("cursor_mode"))
+	if cursorModeValue != "" {
+		cursorMode, err := strconv.ParseBool(cursorModeValue)
+		if err != nil {
+			return servicedto.UsageFilter{}, fmt.Errorf("invalid cursor_mode %q", cursorModeValue)
+		}
+		filter.CursorMode = cursorMode
+	}
+	if cursorValue := strings.TrimSpace(query.Get("cursor")); cursorValue != "" {
+		cursorTimestamp, cursorID, err := decodeUsageEventsCursor(cursorValue)
+		if err != nil {
+			return servicedto.UsageFilter{}, err
+		}
+		filter.CursorMode = true
+		filter.CursorTimestamp = &cursorTimestamp
+		filter.CursorID = cursorID
+	}
+	if filter.CursorMode {
+		filter.Page = 1
+		filter.Offset = 0
+	}
 	filter.Model = strings.TrimSpace(query.Get("model"))
 	// Request Events 前端参数仍叫 source，但它的值是 usage identity；路由层会转换成 auth_index 查询。
 	filter.Source = strings.TrimSpace(query.Get("source"))

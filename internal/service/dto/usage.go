@@ -22,6 +22,9 @@ type UsageFilter struct {
 	Page            int
 	PageSize        int
 	Offset          int
+	CursorMode      bool
+	CursorTimestamp *time.Time
+	CursorID        int64
 	Model           string
 	Source          string
 	AuthIndex       string
@@ -36,6 +39,7 @@ type UsageEventsPage struct {
 	Page       int
 	PageSize   int
 	TotalPages int
+	HasMore    bool
 }
 
 // UsageEventFilterOptions 是 usage events 筛选项的服务层结果。

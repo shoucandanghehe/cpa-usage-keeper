@@ -5,6 +5,7 @@ import {
   RequestEventsDetailsCard,
   isRequestEventColumnSelectionControlled,
   resolveRequestEventColumnMenuFocusIndex,
+  shouldLoadMoreRequestEvents,
   shouldCloseMenuOnFocusLeave,
   toggleRequestEventColumnId,
   type RequestEventColumnId,
@@ -391,6 +392,21 @@ describe('RequestEventsDetailsCard pagination', () => {
     expect(html).not.toContain('_requestEventsLimitHint_');
   });
 
+  it('renders incremental loading status instead of page navigation in infinite mode', () => {
+    const html = renderCard({
+      infiniteScroll: true,
+      hasMore: true,
+      totalCount: 500,
+      onLoadMore: () => undefined,
+    });
+
+    expect(html).toContain('Loaded 1 / 500');
+    expect(html).toContain('Load more');
+    expect(html).not.toContain('>Previous<');
+    expect(html).not.toContain('>Next<');
+    expect(html).toContain('aria-rowcount="501"');
+  });
+
   it('renders one export menu trigger instead of separate CSV and JSON buttons', () => {
     const html = renderCard({ modelFilter: 'claude-sonnet' });
 
@@ -483,6 +499,12 @@ describe('RequestEventsDetailsCard pagination', () => {
     expect(shouldCloseMenuOnFocusLeave(container, insideTarget as EventTarget)).toBe(false);
     expect(shouldCloseMenuOnFocusLeave(container, outsideTarget as EventTarget)).toBe(true);
     expect(shouldCloseMenuOnFocusLeave(container, null)).toBe(true);
+  });
+
+  it('requests another cursor batch only near the bottom of the event scroller', () => {
+    expect(shouldLoadMoreRequestEvents({ scrollTop: 100, clientHeight: 600, scrollHeight: 2000 })).toBe(false);
+    expect(shouldLoadMoreRequestEvents({ scrollTop: 1100, clientHeight: 600, scrollHeight: 2000 })).toBe(true);
+    expect(shouldLoadMoreRequestEvents({ scrollTop: 0, clientHeight: 0, scrollHeight: 0 })).toBe(false);
   });
 
   it('cycles column menu focus for arrow and tab navigation', () => {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 )
@@ -295,6 +296,34 @@ func TestParseUsageFilterQueryAcceptsEventsPaginationAndFilters(t *testing.T) {
 	}
 	if filter.Model != "claude-sonnet" || filter.Source != "source-a" || filter.AuthIndex != "2" {
 		t.Fatalf("expected trimmed server-side filters, got %+v", filter)
+	}
+}
+
+func TestParseUsageFilterQueryAcceptsOpaqueEventsCursor(t *testing.T) {
+	timestamp := time.Date(2026, 4, 22, 11, 59, 58, 123456789, time.FixedZone("CST", 8*60*60))
+	cursor := encodeUsageEventsCursor(timestamp, 42)
+	req := httptest.NewRequest(
+		"GET",
+		"/api/v1/usage/events?range=24h&page=3&page_size=100&cursor_mode=true&cursor="+url.QueryEscape(cursor),
+		nil,
+	)
+
+	filter, err := parseUsageFilterQuery(req, time.Date(2026, 4, 22, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("parseUsageFilterQuery returned error: %v", err)
+	}
+	if !filter.CursorMode || filter.Page != 1 || filter.Offset != 0 || filter.CursorID != 42 || filter.CursorTimestamp == nil {
+		t.Fatalf("expected cursor pagination state, got %+v", filter)
+	}
+	if !filter.CursorTimestamp.Equal(timestamp) {
+		t.Fatalf("expected cursor timestamp %s, got %s", timestamp, filter.CursorTimestamp)
+	}
+}
+
+func TestParseUsageFilterQueryRejectsInvalidEventsCursor(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/v1/usage/events?range=24h&cursor=not-a-cursor", nil)
+	if _, err := parseUsageFilterQuery(req, time.Time{}); err == nil {
+		t.Fatal("expected invalid cursor error")
 	}
 }
 

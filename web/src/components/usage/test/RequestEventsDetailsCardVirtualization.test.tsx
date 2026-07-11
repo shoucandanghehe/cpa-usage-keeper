@@ -192,4 +192,39 @@ describe('RequestEventsDetailsCard event table virtualization', () => {
     expect(scroller?.querySelector('[class*="requestEventsVirtualSpacerRow"]')).toBeNull();
     expect(scroller?.textContent).toContain('model-2');
   });
+
+  it('requests the next cursor batch when infinite scrolling nears the bottom', async () => {
+    const events = Array.from({ length: 100 }, (_, index) => buildEvent(index));
+    const onLoadMore = vi.fn();
+    await act(async () => {
+      root.render(
+        <RequestEventsDetailsCard
+          {...baseProps}
+          events={events}
+          totalCount={500}
+          totalPages={0}
+          infiniteScroll
+          hasMore
+          onLoadMore={onLoadMore}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const scroller = document.querySelector<HTMLElement>('[class*="requestEventsTableWrapper"]');
+    expect(scroller).not.toBeNull();
+    if (scroller) {
+      Object.defineProperties(scroller, {
+        clientHeight: { configurable: true, value: 600 },
+        scrollHeight: { configurable: true, value: 4400 },
+      });
+      scroller.scrollTop = 3500;
+      await act(async () => {
+        scroller.dispatchEvent(new Event('scroll'));
+        await Promise.resolve();
+      });
+    }
+
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+  });
 });

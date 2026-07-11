@@ -154,6 +154,69 @@ func TestListUsageEventsWithFilterPagesByTimestampAndID(t *testing.T) {
 	}
 }
 
+func TestListUsageEventsWithFilterCursorPaginatesWithoutDuplicates(t *testing.T) {
+	db, err := OpenDatabase(config.Config{SQLitePath: filepath.Join(t.TempDir(), "usage-events-cursor.db")})
+	if err != nil {
+		t.Fatalf("OpenDatabase returned error: %v", err)
+	}
+	closeTestDatabase(t, db)
+
+	timestamp := time.Date(2026, 4, 16, 12, 0, 0, 123456789, time.UTC)
+	events := []entities.UsageEvent{
+		{EventKey: "event-1", Model: "model-1", Timestamp: timestamp, TotalTokens: 10},
+		{EventKey: "event-2", Model: "model-2", Timestamp: timestamp, TotalTokens: 20},
+		{EventKey: "event-3", Model: "model-3", Timestamp: timestamp.Add(-time.Second), TotalTokens: 30},
+		{EventKey: "event-4", Model: "model-4", Timestamp: timestamp.Add(-2 * time.Second), TotalTokens: 40},
+		{EventKey: "event-5", Model: "model-5", Timestamp: timestamp.Add(-2 * time.Second), TotalTokens: 50},
+	}
+	if _, _, err := InsertUsageEvents(db, events); err != nil {
+		t.Fatalf("InsertUsageEvents returned error: %v", err)
+	}
+
+	allRows, err := ListUsageEventsWithFilter(db, dto.UsageQueryFilter{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatalf("load expected ordering: %v", err)
+	}
+	var loadedIDs []int64
+	filter := dto.UsageQueryFilter{CursorMode: true, PageSize: 2}
+	for batch := 0; ; batch++ {
+		page, err := ListUsageEventsWithFilter(db, filter)
+		if err != nil {
+			t.Fatalf("load cursor batch %d: %v", batch, err)
+		}
+		if batch == 0 && page.TotalCount != int64(len(events)) {
+			t.Fatalf("expected first cursor batch total count, got %+v", page)
+		}
+		if batch > 0 && page.TotalCount != -1 {
+			t.Fatalf("expected continuation batch to skip total count, got %+v", page)
+		}
+		for _, event := range page.Events {
+			loadedIDs = append(loadedIDs, event.ID)
+		}
+		if !page.HasMore {
+			break
+		}
+		lastEvent := page.Events[len(page.Events)-1]
+		cursorTimestamp := lastEvent.Timestamp
+		filter.CursorTimestamp = &cursorTimestamp
+		filter.CursorID = lastEvent.ID
+	}
+
+	if len(loadedIDs) != len(allRows.Events) {
+		t.Fatalf("expected %d cursor rows, got %d: %+v", len(allRows.Events), len(loadedIDs), loadedIDs)
+	}
+	seen := make(map[int64]struct{}, len(loadedIDs))
+	for index, id := range loadedIDs {
+		if _, exists := seen[id]; exists {
+			t.Fatalf("cursor pagination returned duplicate id %d: %+v", id, loadedIDs)
+		}
+		seen[id] = struct{}{}
+		if id != allRows.Events[index].ID {
+			t.Fatalf("cursor ordering mismatch at %d: got %d want %d", index, id, allRows.Events[index].ID)
+		}
+	}
+}
+
 func TestListUsageEventsWithFilterAppliesModelAuthIndexAndResultFilters(t *testing.T) {
 	db, err := OpenDatabase(config.Config{SQLitePath: filepath.Join(t.TempDir(), "usage-events-filtered.db")})
 	if err != nil {

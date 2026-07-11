@@ -167,6 +167,25 @@ export const shouldAutoRefreshUsageTab = ({
   return false;
 };
 
+export const appendUniqueUsageEvents = (
+  currentEvents: readonly UsageEvent[],
+  incomingEvents: readonly UsageEvent[],
+): UsageEvent[] => {
+  const seenEventIds = new Set(
+    currentEvents
+      .map((event) => String(event.id ?? '').trim())
+      .filter(Boolean),
+  );
+  const merged = [...currentEvents];
+  for (const event of incomingEvents) {
+    const eventId = String(event.id ?? '').trim();
+    if (eventId && seenEventIds.has(eventId)) continue;
+    if (eventId) seenEventIds.add(eventId);
+    merged.push(event);
+  }
+  return merged;
+};
+
 type RequestEventFilterState = {
   model: string;
   source: string;
@@ -963,6 +982,9 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const [eventsPageSize, setEventsPageSize] = useState<number>(initialRequestEventsPreferences.pageSize);
   const [eventsTotalCount, setEventsTotalCount] = useState(0);
   const [eventsTotalPages, setEventsTotalPages] = useState(0);
+  const [eventsNextCursor, setEventsNextCursor] = useState<string | null>(null);
+  const [eventsHasMore, setEventsHasMore] = useState(false);
+  const [eventsLoadingMore, setEventsLoadingMore] = useState(false);
   const [eventsModelOptions, setEventsModelOptions] = useState<string[]>([]);
   const [eventsSourceOptions, setEventsSourceOptions] = useState<UsageSourceFilterOption[]>([]);
   const [eventsModelFilter, setEventsModelFilter] = useState(initialRequestEventsPreferences.filters.model);
@@ -978,6 +1000,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const requestLogAccessEnabled = status?.cpa_request_log_access_enabled === true;
   const requestLogDownloadGenerationRef = useRef(0);
   const eventsRequestControllerRef = useRef<AbortController | null>(null);
+  const eventsLoadMoreRequestControllerRef = useRef<AbortController | null>(null);
   const eventsFilterOptionsRequestControllerRef = useRef<AbortController | null>(null);
   const requestLogControllerRef = useRef<AbortController | null>(null);
   const [manualRefreshLoading, setManualRefreshLoading] = useState(false);
@@ -1456,24 +1479,32 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     if (!queryWindow.valid) {
       eventsRequestControllerRef.current?.abort();
       eventsRequestControllerRef.current = null;
+      eventsLoadMoreRequestControllerRef.current?.abort();
+      eventsLoadMoreRequestControllerRef.current = null;
       setEventsData([]);
       setEventsTotalCount(0);
       setEventsTotalPages(0);
+      setEventsNextCursor(null);
+      setEventsHasMore(false);
       setEventsError('');
       setEventsLoading(false);
+      setEventsLoadingMore(false);
       return;
     }
 
     eventsRequestControllerRef.current?.abort();
+    eventsLoadMoreRequestControllerRef.current?.abort();
+    eventsLoadMoreRequestControllerRef.current = null;
     const controller = new AbortController();
     eventsRequestControllerRef.current = controller;
 
     setEventsLoading(true);
+    setEventsLoadingMore(false);
     setEventsError('');
     try {
       const response = await fetchUsageEvents(timeRange, queryWindow.start, queryWindow.end, controller.signal, {
-        page: eventsPage,
         pageSize: eventsPageSize,
+        cursorMode: true,
         model: eventsModelFilter === ALL_REQUEST_EVENTS_FILTER ? undefined : eventsModelFilter,
         source: eventsSourceFilter === ALL_REQUEST_EVENTS_FILTER ? undefined : eventsSourceFilter,
         result: eventsResultFilter === ALL_REQUEST_EVENTS_FILTER ? undefined : eventsResultFilter,
@@ -1482,13 +1513,12 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
       if (eventsRequestControllerRef.current !== controller) {
         return;
       }
-      if (response.total_pages > 0 && eventsPage > response.total_pages) {
-        setEventsPage(response.total_pages);
-        return;
-      }
       setEventsData(response.events);
-      setEventsTotalCount(response.total_count);
-      setEventsTotalPages(response.total_pages);
+      setEventsTotalCount(Math.max(response.total_count, 0));
+      setEventsTotalPages(0);
+      setEventsNextCursor(response.next_cursor?.trim() || null);
+      setEventsHasMore(response.has_more === true && Boolean(response.next_cursor?.trim()));
+      setEventsPage(1);
     } catch (error) {
       if (controller.signal.aborted) {
         return;
@@ -1497,6 +1527,8 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
         setEventsData([]);
         setEventsTotalCount(0);
         setEventsTotalPages(0);
+        setEventsNextCursor(null);
+        setEventsHasMore(false);
       }
       if (error instanceof ApiError && error.status === 401) {
         onAuthRequired?.();
@@ -1509,9 +1541,57 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
         eventsRequestControllerRef.current = null;
       }
     }
-  }, [eventsModelFilter, eventsPage, eventsPageSize, eventsResultFilter, eventsSourceFilter, getEventQueryWindow, onAuthRequired, selectedApiKeyId, timeRange]);
+  }, [eventsModelFilter, eventsPageSize, eventsResultFilter, eventsSourceFilter, getEventQueryWindow, onAuthRequired, selectedApiKeyId, timeRange]);
+
+  const loadMoreEvents = useCallback(async () => {
+    const cursor = eventsNextCursor?.trim();
+    if (!cursor || !eventsHasMore || eventsLoadMoreRequestControllerRef.current) return;
+    const queryWindow = getEventQueryWindow();
+    if (!queryWindow.valid) return;
+
+    const controller = new AbortController();
+    eventsLoadMoreRequestControllerRef.current = controller;
+    setEventsLoadingMore(true);
+    setEventsError('');
+    try {
+      const response = await fetchUsageEvents(timeRange, queryWindow.start, queryWindow.end, controller.signal, {
+        pageSize: eventsPageSize,
+        cursorMode: true,
+        cursor,
+        model: eventsModelFilter === ALL_REQUEST_EVENTS_FILTER ? undefined : eventsModelFilter,
+        source: eventsSourceFilter === ALL_REQUEST_EVENTS_FILTER ? undefined : eventsSourceFilter,
+        result: eventsResultFilter === ALL_REQUEST_EVENTS_FILTER ? undefined : eventsResultFilter,
+        apiKeyId: selectedApiKeyId,
+      });
+      if (eventsLoadMoreRequestControllerRef.current !== controller) return;
+      setEventsData((currentEvents) => appendUniqueUsageEvents(currentEvents, response.events));
+      if (response.total_count >= 0) {
+        setEventsTotalCount(response.total_count);
+      }
+      setEventsNextCursor(response.next_cursor?.trim() || null);
+      setEventsHasMore(response.has_more === true && Boolean(response.next_cursor?.trim()));
+      setEventsPage((currentPage) => currentPage + 1);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (error instanceof ApiError && error.status === 401) {
+        onAuthRequired?.();
+        return;
+      }
+      setEventsError(error instanceof Error ? error.message : 'Failed to load more usage events');
+    } finally {
+      if (eventsLoadMoreRequestControllerRef.current === controller) {
+        eventsLoadMoreRequestControllerRef.current = null;
+        setEventsLoadingMore(false);
+      }
+    }
+  }, [eventsHasMore, eventsModelFilter, eventsNextCursor, eventsPageSize, eventsResultFilter, eventsSourceFilter, getEventQueryWindow, onAuthRequired, selectedApiKeyId, timeRange]);
 
   const resetEventsPage = useCallback(() => {
+    eventsLoadMoreRequestControllerRef.current?.abort();
+    eventsLoadMoreRequestControllerRef.current = null;
+    setEventsNextCursor(null);
+    setEventsHasMore(false);
+    setEventsLoadingMore(false);
     setEventsPage(1);
   }, []);
 
@@ -1765,13 +1845,18 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
     if (activeTab !== 'events') {
       eventsRequestControllerRef.current?.abort();
       eventsRequestControllerRef.current = null;
+      eventsLoadMoreRequestControllerRef.current?.abort();
+      eventsLoadMoreRequestControllerRef.current = null;
       setEventsLoading(false);
+      setEventsLoadingMore(false);
       return;
     }
     void loadEvents();
     return () => {
       eventsRequestControllerRef.current?.abort();
       eventsRequestControllerRef.current = null;
+      eventsLoadMoreRequestControllerRef.current?.abort();
+      eventsLoadMoreRequestControllerRef.current = null;
     };
   }, [activeTab, loadEvents]);
 
@@ -2210,6 +2295,9 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                   sourceFilter={eventsSourceFilter}
                   resultFilter={eventsResultFilter}
                   exportingFormat={eventsExportingFormat}
+                  infiniteScroll
+                  hasMore={eventsHasMore}
+                  loadingMore={eventsLoadingMore}
                   visibleColumnIds={eventsVisibleColumnIds}
                   onPageChange={setEventsPage}
                   onPageSizeChange={handleEventsPageSizeChange}
@@ -2217,6 +2305,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                   onSourceFilterChange={handleEventsSourceFilterChange}
                   onResultFilterChange={handleEventsResultFilterChange}
                   onExport={handleEventsExport}
+                  onLoadMore={loadMoreEvents}
                   onVisibleColumnIdsChange={setEventsVisibleColumnIds}
                   requestLogAccessEnabled={requestLogAccessEnabled}
                   onRequestLogOpen={handleRequestLogOpen}

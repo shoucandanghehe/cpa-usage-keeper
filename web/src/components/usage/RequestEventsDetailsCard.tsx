@@ -29,10 +29,11 @@ import {
 import styles from '@/pages/UsagePage.module.scss';
 
 const ALL_FILTER = '__all__';
-const REQUEST_EVENT_VIRTUALIZATION_THRESHOLD = 100;
+const REQUEST_EVENT_VIRTUALIZATION_THRESHOLD = 50;
 const REQUEST_EVENT_VIRTUAL_ROW_HEIGHT = 44;
 const REQUEST_EVENT_VIRTUAL_OVERSCAN = 8;
 const REQUEST_EVENT_VIRTUAL_INITIAL_VIEWPORT_HEIGHT = 760;
+const REQUEST_EVENT_LOAD_MORE_THRESHOLD_PX = 320;
 const REQUEST_LOG_VIRTUAL_LINE_HEIGHT = 18;
 const REQUEST_LOG_VIRTUAL_OVERSCAN = 8;
 const REQUEST_LOG_VIRTUAL_PADDING_Y = 12;
@@ -116,6 +117,18 @@ export const shouldCloseMenuOnFocusLeave = (
   container: { contains: (target: EventTarget) => boolean },
   nextFocus: EventTarget | null
 ): boolean => nextFocus === null || !container.contains(nextFocus);
+
+export const shouldLoadMoreRequestEvents = ({
+  scrollTop,
+  clientHeight,
+  scrollHeight,
+  threshold = REQUEST_EVENT_LOAD_MORE_THRESHOLD_PX,
+}: {
+  scrollTop: number;
+  clientHeight: number;
+  scrollHeight: number;
+  threshold?: number;
+}): boolean => scrollHeight > 0 && scrollTop + clientHeight >= scrollHeight - Math.max(threshold, 0);
 
 const appendSelectedOption = (
   options: SelectOption[],
@@ -298,6 +311,9 @@ export interface RequestEventsDetailsCardProps {
   sourceFilter: string;
   resultFilter: string;
   exportingFormat?: RequestEventExportFormat | null;
+  infiniteScroll?: boolean;
+  hasMore?: boolean;
+  loadingMore?: boolean;
   initialVisibleColumnIds?: readonly RequestEventColumnId[];
   visibleColumnIds?: readonly RequestEventColumnId[];
   onPageChange: (page: number) => void;
@@ -306,6 +322,7 @@ export interface RequestEventsDetailsCardProps {
   onSourceFilterChange: (source: string) => void;
   onResultFilterChange: (result: string) => void;
   onExport?: (format: RequestEventExportFormat) => void;
+  onLoadMore?: () => void;
   onVisibleColumnIdsChange?: (columnIds: RequestEventColumnId[]) => void;
   requestLogAccessEnabled?: boolean;
   onRequestLogOpen?: (event: UsageEvent) => void;
@@ -900,6 +917,9 @@ export function RequestEventsDetailsCard({
   sourceFilter,
   resultFilter,
   exportingFormat = null,
+  infiniteScroll = false,
+  hasMore = false,
+  loadingMore = false,
   initialVisibleColumnIds,
   visibleColumnIds,
   onPageChange,
@@ -908,6 +928,7 @@ export function RequestEventsDetailsCard({
   onSourceFilterChange,
   onResultFilterChange,
   onExport,
+  onLoadMore,
   onVisibleColumnIdsChange,
   requestLogAccessEnabled = false,
   onRequestLogOpen,
@@ -1314,6 +1335,20 @@ export function RequestEventsDetailsCard({
     onSourceFilterChange(ALL_FILTER);
     onResultFilterChange(ALL_FILTER);
   };
+  const handleTableScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    if (!infiniteScroll || !hasMore || loadingMore || !onLoadMore) return;
+    const scroller = event.currentTarget;
+    if (shouldLoadMoreRequestEvents(scroller)) {
+      onLoadMore();
+    }
+  }, [hasMore, infiniteScroll, loadingMore, onLoadMore]);
+  useEffect(() => {
+    const scroller = tableScrollerRef.current;
+    if (!scroller || !infiniteScroll || !hasMore || loadingMore || !onLoadMore) return;
+    if (shouldLoadMoreRequestEvents(scroller)) {
+      onLoadMore();
+    }
+  }, [hasMore, infiniteScroll, loadingMore, onLoadMore, rows.length]);
 
   return (
     <>
@@ -1406,8 +1441,10 @@ export function RequestEventsDetailsCard({
               ref={tableScrollerRef}
               className={styles.requestEventsTableWrapper}
               data-virtualized={virtualizeRows}
+              data-loaded-row-count={rows.length}
+              onScroll={handleTableScroll}
             >
-              <table className={styles.table} aria-rowcount={rows.length + 1}>
+              <table className={styles.table} aria-rowcount={(infiniteScroll ? totalCount : rows.length) + 1}>
                 <thead>
                   <tr>
                     {visibleColumns.map((column) => (
@@ -1479,13 +1516,33 @@ export function RequestEventsDetailsCard({
                     {pageSizeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
                   </select>
                 </label>
-                <button type="button" className={styles.requestEventsPagerButton} onClick={() => onPageChange(page - 1)} disabled={loading || safePage <= 1}>
-                  {t('usage_stats.request_events_previous_page')}
-                </button>
-                <span className={styles.requestEventsPaginationPage}>{pageLabel}</span>
-                <button type="button" className={styles.requestEventsPagerButton} onClick={() => onPageChange(page + 1)} disabled={loading || safeTotalPages === 0 || safePage >= safeTotalPages}>
-                  {t('usage_stats.request_events_next_page')}
-                </button>
+                {infiniteScroll ? (
+                  <>
+                    <span className={styles.requestEventsPaginationPage} aria-live="polite">
+                      {t('usage_stats.request_events_loaded_count', { loaded: rows.length, total: totalCount })}
+                    </span>
+                    {hasMore && (
+                      <button
+                        type="button"
+                        className={styles.requestEventsPagerButton}
+                        onClick={onLoadMore}
+                        disabled={loading || loadingMore}
+                      >
+                        {loadingMore ? t('common.loading') : t('usage_stats.request_events_load_more')}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <button type="button" className={styles.requestEventsPagerButton} onClick={() => onPageChange(page - 1)} disabled={loading || safePage <= 1}>
+                      {t('usage_stats.request_events_previous_page')}
+                    </button>
+                    <span className={styles.requestEventsPaginationPage}>{pageLabel}</span>
+                    <button type="button" className={styles.requestEventsPagerButton} onClick={() => onPageChange(page + 1)} disabled={loading || safeTotalPages === 0 || safePage >= safeTotalPages}>
+                      {t('usage_stats.request_events_next_page')}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </>
