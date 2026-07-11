@@ -4,11 +4,13 @@ import (
 	"cpa-usage-keeper/internal/repository/dto"
 	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"cpa-usage-keeper/internal/config"
 	"cpa-usage-keeper/internal/entities"
+	"gorm.io/gorm"
 )
 
 func TestListUsageEventsWithFilterAppliesTimeBoundsAndPagination(t *testing.T) {
@@ -44,6 +46,45 @@ func TestListUsageEventsWithFilterAppliesTimeBoundsAndPagination(t *testing.T) {
 	}
 	if page.Events[0].ReasoningEffort != "high" {
 		t.Fatalf("expected reasoning effort to round trip, got %+v", page.Events[0])
+	}
+}
+
+func TestListUsageEventsWithFilterSkipsUnusedModelOptionsQuery(t *testing.T) {
+	db, err := OpenDatabase(config.Config{SQLitePath: filepath.Join(t.TempDir(), "usage-events-query-count.db")})
+	if err != nil {
+		t.Fatalf("OpenDatabase returned error: %v", err)
+	}
+	closeTestDatabase(t, db)
+
+	if _, _, err := InsertUsageEvents(db, []entities.UsageEvent{
+		{EventKey: "event-1", Model: "claude-sonnet", Timestamp: time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC), TotalTokens: 10},
+		{EventKey: "event-2", Model: "gpt-5", Timestamp: time.Date(2026, 4, 16, 11, 0, 0, 0, time.UTC), TotalTokens: 20},
+	}); err != nil {
+		t.Fatalf("InsertUsageEvents returned error: %v", err)
+	}
+
+	var usageEventQueries []string
+	const callbackName = "test:capture_usage_event_list_queries"
+	if err := db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		sql := tx.Statement.SQL.String()
+		if strings.Contains(sql, "FROM `usage_events`") || strings.Contains(sql, "FROM \"usage_events\"") {
+			usageEventQueries = append(usageEventQueries, sql)
+		}
+	}); err != nil {
+		t.Fatalf("register query callback returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Callback().Query().Remove(callbackName) })
+
+	if _, err := ListUsageEventsWithFilter(db, dto.UsageQueryFilter{Page: 1, PageSize: 100}); err != nil {
+		t.Fatalf("ListUsageEventsWithFilter returned error: %v", err)
+	}
+	if len(usageEventQueries) != 2 {
+		t.Fatalf("expected count and page queries only, got %d: %+v", len(usageEventQueries), usageEventQueries)
+	}
+	for _, sql := range usageEventQueries {
+		if strings.Contains(strings.ToUpper(sql), "DISTINCT") {
+			t.Fatalf("list query should not reload model filter options: %s", sql)
+		}
 	}
 }
 

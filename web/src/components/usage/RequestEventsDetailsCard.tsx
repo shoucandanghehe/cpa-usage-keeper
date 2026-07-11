@@ -29,6 +29,10 @@ import {
 import styles from '@/pages/UsagePage.module.scss';
 
 const ALL_FILTER = '__all__';
+const REQUEST_EVENT_VIRTUALIZATION_THRESHOLD = 100;
+const REQUEST_EVENT_VIRTUAL_ROW_HEIGHT = 44;
+const REQUEST_EVENT_VIRTUAL_OVERSCAN = 8;
+const REQUEST_EVENT_VIRTUAL_INITIAL_VIEWPORT_HEIGHT = 760;
 const REQUEST_LOG_VIRTUAL_LINE_HEIGHT = 18;
 const REQUEST_LOG_VIRTUAL_OVERSCAN = 8;
 const REQUEST_LOG_VIRTUAL_PADDING_Y = 12;
@@ -991,6 +995,23 @@ export function RequestEventsDetailsCard({
       };
     });
   }, [events, t]);
+  const tableScrollerRef = useRef<HTMLDivElement | null>(null);
+  const virtualizeRows = rows.length > REQUEST_EVENT_VIRTUALIZATION_THRESHOLD;
+  // TanStack Virtual 依赖内部可变测量状态，不参与 React Compiler 自动记忆化。
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const eventRowVirtualizer = useVirtualizer({
+    count: virtualizeRows ? rows.length : 0,
+    getScrollElement: () => tableScrollerRef.current,
+    estimateSize: () => REQUEST_EVENT_VIRTUAL_ROW_HEIGHT,
+    overscan: REQUEST_EVENT_VIRTUAL_OVERSCAN,
+    getItemKey: (index) => rows[index]?.id ?? index,
+    initialRect: { width: 0, height: REQUEST_EVENT_VIRTUAL_INITIAL_VIEWPORT_HEIGHT },
+  });
+  const virtualRows = eventRowVirtualizer.getVirtualItems();
+  const virtualPaddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const virtualPaddingBottom = virtualRows.length > 0
+    ? Math.max(eventRowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end, 0)
+    : 0;
 
   const [internalVisibleColumnIds, setInternalVisibleColumnIds] = useState<RequestEventColumnId[]>(() => (
     normalizeRequestEventVisibleColumnIds(initialVisibleColumnIds ?? visibleColumnIds ?? REQUEST_EVENT_COLUMN_IDS)
@@ -1008,6 +1029,11 @@ export function RequestEventsDetailsCard({
     () => new Set<RequestEventColumnId>(effectiveVisibleColumnIds),
     [effectiveVisibleColumnIds]
   );
+  useLayoutEffect(() => {
+    if (virtualizeRows) {
+      eventRowVirtualizer.measure();
+    }
+  }, [effectiveVisibleColumnIds, eventRowVirtualizer, virtualizeRows]);
   const handleColumnToggle = useCallback((columnId: RequestEventColumnId) => {
     const nextColumnIds = toggleRequestEventColumnId(selectedVisibleColumnIds, columnId);
     if (!isColumnSelectionControlled) {
@@ -1376,8 +1402,12 @@ export function RequestEventsDetailsCard({
           />
         ) : (
           <>
-            <div className={styles.requestEventsTableWrapper}>
-              <table className={styles.table}>
+            <div
+              ref={tableScrollerRef}
+              className={styles.requestEventsTableWrapper}
+              data-virtualized={virtualizeRows}
+            >
+              <table className={styles.table} aria-rowcount={rows.length + 1}>
                 <thead>
                   <tr>
                     {visibleColumns.map((column) => (
@@ -1386,7 +1416,43 @@ export function RequestEventsDetailsCard({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {virtualizeRows ? (
+                    <>
+                      {virtualPaddingTop > 0 && (
+                        <tr
+                          className={styles.requestEventsVirtualSpacerRow}
+                          style={{ height: `${virtualPaddingTop}px` }}
+                          aria-hidden="true"
+                        >
+                          <td colSpan={visibleColumns.length} />
+                        </tr>
+                      )}
+                      {virtualRows.map((virtualRow) => {
+                        const row = rows[virtualRow.index];
+                        return (
+                          <tr
+                            key={virtualRow.key}
+                            ref={eventRowVirtualizer.measureElement}
+                            data-index={virtualRow.index}
+                            aria-rowindex={virtualRow.index + 2}
+                          >
+                            {visibleColumns.map((column) => (
+                              <React.Fragment key={column.id}>{column.renderCell(row)}</React.Fragment>
+                            ))}
+                          </tr>
+                        );
+                      })}
+                      {virtualPaddingBottom > 0 && (
+                        <tr
+                          className={styles.requestEventsVirtualSpacerRow}
+                          style={{ height: `${virtualPaddingBottom}px` }}
+                          aria-hidden="true"
+                        >
+                          <td colSpan={visibleColumns.length} />
+                        </tr>
+                      )}
+                    </>
+                  ) : rows.map((row) => (
                     <tr key={row.id}>
                       {visibleColumns.map((column) => (
                         <React.Fragment key={column.id}>{column.renderCell(row)}</React.Fragment>
