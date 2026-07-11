@@ -43,6 +43,7 @@ const REQUEST_LOG_GRAPHEME_CONTEXT_CHARS = 64;
 const REQUEST_LOG_GRAPHEME_SEGMENTER = typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
   ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
   : null;
+const REQUEST_EVENT_INTEGER_FORMATTER = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 
 type SelectOption = { value: string; label: string };
 
@@ -162,17 +163,27 @@ type RequestEventRow = {
   isDelete: boolean;
   failed: boolean;
   latencyMs: number | null;
+  latencyLabel: string;
   ttftMs: number | null;
+  ttftLabel: string;
   speedTPS: number | null;
+  speedLabel: string;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
   totalTokens: number;
+  inputTokensLabel: string;
+  outputTokensLabel: string;
+  reasoningTokensLabel: string;
+  cacheReadTokensLabel: string;
+  cacheCreationTokensLabel: string;
+  totalTokensLabel: string;
   cacheReadRate: string;
   cost: number | null;
   costAvailable: boolean;
+  costLabel: string;
 };
 
 type RequestEventColumnDefinition = {
@@ -181,6 +192,32 @@ type RequestEventColumnDefinition = {
   header: ReactNode;
   renderCell: (row: RequestEventRow) => ReactNode;
 };
+
+type RequestEventTableRowProps = {
+  row: RequestEventRow;
+  columns: readonly RequestEventColumnDefinition[];
+  virtualIndex?: number;
+  measureElement?: (node: HTMLTableRowElement | null) => void;
+};
+
+const RequestEventTableRow = React.memo(function RequestEventTableRow({
+  row,
+  columns,
+  virtualIndex,
+  measureElement,
+}: RequestEventTableRowProps) {
+  return (
+    <tr
+      ref={measureElement}
+      data-index={virtualIndex}
+      aria-rowindex={virtualIndex === undefined ? undefined : virtualIndex + 2}
+    >
+      {columns.map((column) => (
+        <React.Fragment key={column.id}>{column.renderCell(row)}</React.Fragment>
+      ))}
+    </tr>
+  );
+});
 
 const REQUEST_LOG_SECTION_TITLE_KEYS: Record<string, string> = {
   'REQUEST INFO': 'usage_stats.request_events_log_section_request_info',
@@ -1002,17 +1039,27 @@ export function RequestEventsDetailsCard({
         isDelete: event.isDelete === true,
         failed: event.failed === true,
         latencyMs,
+        latencyLabel: formatDurationMs(latencyMs),
         ttftMs,
+        ttftLabel: formatTTFTMs(ttftMs),
         speedTPS,
+        speedLabel: formatSpeedTPS(speedTPS),
         inputTokens,
         outputTokens,
         reasoningTokens,
         cacheReadTokens,
         cacheCreationTokens,
         totalTokens,
+        inputTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(inputTokens),
+        outputTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(outputTokens),
+        reasoningTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(reasoningTokens),
+        cacheReadTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(cacheReadTokens),
+        cacheCreationTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(cacheCreationTokens),
+        totalTokensLabel: REQUEST_EVENT_INTEGER_FORMATTER.format(totalTokens),
         cacheReadRate: formatCacheReadRate(cacheReadTokens, inputTokens),
         cost,
         costAvailable,
+        costLabel: costAvailable && cost !== null ? formatUsd(cost) : '-',
       };
     });
   }, [events, t]);
@@ -1234,49 +1281,49 @@ export function RequestEventsDetailsCard({
         id: 'ttft',
         label: t('usage_stats.ttft'),
         header: <th className={styles.requestEventsNoWrapCell} title={ttftHint}>{t('usage_stats.ttft')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{formatTTFTMs(row.ttftMs)}</td>,
+        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.ttftLabel}</td>,
       },
       {
         id: 'latency',
         label: t('usage_stats.latency'),
         header: <th className={styles.requestEventsNoWrapCell} title={latencyHint}>{t('usage_stats.latency')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{formatDurationMs(row.latencyMs)}</td>,
+        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.latencyLabel}</td>,
       },
       {
         id: 'speed',
         label: t('usage_stats.speed'),
         header: <th className={styles.requestEventsNoWrapCell} title={speedHint}>{t('usage_stats.speed')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{formatSpeedTPS(row.speedTPS)}</td>,
+        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.speedLabel}</td>,
       },
       {
         id: 'input_tokens',
         label: t('usage_stats.input_tokens'),
         header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.input_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.inputTokens.toLocaleString()}</td>,
+        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.inputTokensLabel}</td>,
       },
       {
         id: 'output_tokens',
         label: t('usage_stats.output_tokens'),
         header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.output_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.outputTokens.toLocaleString()}</td>,
+        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.outputTokensLabel}</td>,
       },
       {
         id: 'reasoning_tokens',
         label: t('usage_stats.reasoning_tokens'),
         header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.reasoning_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.reasoningTokens.toLocaleString()}</td>,
+        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.reasoningTokensLabel}</td>,
       },
       {
         id: 'cache_read_tokens',
         label: t('usage_stats.cache_read_tokens'),
         header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.cache_read_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.cacheReadTokens.toLocaleString()}</td>,
+        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.cacheReadTokensLabel}</td>,
       },
       {
         id: 'cache_creation_tokens',
         label: t('usage_stats.cache_creation_tokens'),
         header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.cache_creation_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.cacheCreationTokens.toLocaleString()}</td>,
+        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.cacheCreationTokensLabel}</td>,
       },
       {
         id: 'cache_read_rate',
@@ -1288,7 +1335,7 @@ export function RequestEventsDetailsCard({
         id: 'total_tokens',
         label: t('usage_stats.total_tokens'),
         header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.total_tokens')}</th>,
-        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.totalTokens.toLocaleString()}</td>,
+        renderCell: (row) => <td className={styles.requestEventsNoWrapCell}>{row.totalTokensLabel}</td>,
       },
       {
         id: 'total_cost',
@@ -1296,7 +1343,7 @@ export function RequestEventsDetailsCard({
         header: <th className={styles.requestEventsNoWrapCell}>{t('usage_stats.total_cost')}</th>,
         renderCell: (row) => (
           <td className={styles.requestEventsNoWrapCell} title={row.costAvailable ? undefined : t('usage_stats.cost_need_price')}>
-            {row.costAvailable && row.cost !== null ? formatUsd(row.cost) : '-'}
+            {row.costLabel}
           </td>
         ),
       },
@@ -1467,16 +1514,13 @@ export function RequestEventsDetailsCard({
                       {virtualRows.map((virtualRow) => {
                         const row = rows[virtualRow.index];
                         return (
-                          <tr
+                          <RequestEventTableRow
                             key={virtualRow.key}
-                            ref={eventRowVirtualizer.measureElement}
-                            data-index={virtualRow.index}
-                            aria-rowindex={virtualRow.index + 2}
-                          >
-                            {visibleColumns.map((column) => (
-                              <React.Fragment key={column.id}>{column.renderCell(row)}</React.Fragment>
-                            ))}
-                          </tr>
+                            row={row}
+                            columns={visibleColumns}
+                            virtualIndex={virtualRow.index}
+                            measureElement={eventRowVirtualizer.measureElement}
+                          />
                         );
                       })}
                       {virtualPaddingBottom > 0 && (
@@ -1490,11 +1534,7 @@ export function RequestEventsDetailsCard({
                       )}
                     </>
                   ) : rows.map((row) => (
-                    <tr key={row.id}>
-                      {visibleColumns.map((column) => (
-                        <React.Fragment key={column.id}>{column.renderCell(row)}</React.Fragment>
-                      ))}
-                    </tr>
+                    <RequestEventTableRow key={row.id} row={row} columns={visibleColumns} />
                   ))}
                 </tbody>
               </table>
