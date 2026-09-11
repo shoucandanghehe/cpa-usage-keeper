@@ -21,6 +21,7 @@ describe('usage page navigation', () => {
       ['events', '/request-events'],
       ['auth-files', '/auth-files'],
       ['ai-provider', '/ai-provider'],
+      ['billing', '/billing'],
       ['settings', '/settings'],
     ] as const;
 
@@ -49,6 +50,7 @@ describe('usage page navigation', () => {
 
   it('lets a valid direct route override storage while keeping root storage behavior', () => {
     expect(resolveInitialUsageTab('/cpa/auth-files', '/cpa', 'analysis')).toBe('auth-files');
+    expect(resolveInitialUsageTab('/cpa/billing', '/cpa', 'overview')).toBe('billing');
     expect(resolveInitialUsageTab('/cpa/', '/cpa', 'analysis')).toBe('analysis');
     expect(resolveInitialUsageTab('/cpa/', '/cpa', 'credentials')).toBe('auth-files');
     expect(resolveInitialUsageTab('/cpa/', '/cpa', 'unknown')).toBe('overview');

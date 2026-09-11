@@ -95,6 +95,7 @@ const (
 	// migrationAddUsageEventAPIGroupKeyTimestampIndex 用 (api_group_key, timestamp) 复合索引替代单列 Key 索引。
 	migrationAddUsageEventAPIGroupKeyTimestampIndex = "20260905_usage_event_api_group_key_timestamp_index"
 	migrationAddUsageIdentityStatsReset             = "20260910_usage_identity_stats_reset"
+	migrationCreateBilling                          = "20260911_create_billing"
 	migrationAddUsageEventSessionFields             = "20260912_usage_event_session_fields"
 	migrationAddUsageEventResponseModel             = "20260918_usage_event_response_model"
 	migrationAddUsageEventStreamStatusCode          = "20260919_usage_event_stream_status_code"
@@ -247,6 +248,7 @@ func orderedMigrations() []databaseMigration {
 		// 将单列 Key 索引收敛为 Key+时间复合索引，支持请求记录和历史边界查询。
 		{version: migrationAddUsageEventAPIGroupKeyTimestampIndex, run: addUsageEventAPIGroupKeyTimestampIndexMigration},
 		{version: migrationAddUsageIdentityStatsReset, run: addUsageIdentityStatsResetMigration},
+		{version: migrationCreateBilling, run: createBillingMigration},
 		{version: migrationAddUsageEventSessionFields, run: addUsageEventSessionFieldsMigration},
 		{version: migrationAddUsageEventResponseModel, run: addUsageEventResponseModelMigration},
 		{version: migrationAddUsageEventStreamStatusCode, run: addUsageEventStreamStatusCodeMigration},

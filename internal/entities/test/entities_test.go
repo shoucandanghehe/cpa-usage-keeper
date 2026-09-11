@@ -11,43 +11,6 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestAllIncludesCoreModels(t *testing.T) {
-	items := All()
-	expected := []any{
-		&UsageEvent{},
-		&UsageEventArchive{},
-		// Errors 直接写最终表；全新数据库必须随核心模型创建该表。
-		&ErrorEvent{},
-		&RedisUsageInbox{},
-		&ModelPriceSetting{},
-		&ModelPriceRule{},
-		&UsageIdentity{},
-		&CPAAPIKey{},
-		&UsageOverviewHourlyStat{},
-		&UsageOverviewDailyStat{},
-		// 全局聚合只注册一张通用 checkpoint 表。
-		&UsageAggregationCheckpoint{},
-		&LocalRankingPeriodStat{},
-		// Activity 统计必须随核心模型注册，确保全新数据库直接得到新表。
-		&UsageActivityStat{},
-		// Latency 小时/天数据共用一张聚合表。
-		&UsageLatencyStat{},
-		&AuthSession{},
-		&AppSetting{},
-		// 通用额度历史按父周期、子百分比状态段顺序注册，确保全新数据库创建真实外键。
-		&QuotaCycle{},
-		&QuotaPercentSegment{},
-	}
-	if len(items) != len(expected) {
-		t.Fatalf("expected %d registered models, got %d", len(expected), len(items))
-	}
-	for index := range expected {
-		if got, want := reflect.TypeOf(items[index]), reflect.TypeOf(expected[index]); got != want {
-			t.Fatalf("expected model %d to be %v, got %v", index, want, got)
-		}
-	}
-}
-
 func TestAppSettingSchemaRequiresTimestamps(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

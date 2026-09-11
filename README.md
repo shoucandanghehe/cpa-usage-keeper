@@ -72,12 +72,33 @@ CPA Usage Keeper is a standalone persistence and analytics dashboard for [CLIPro
 - Track requests, tokens, cost, cache usage, success rate, RPM/TPM, and latency, with filters for time range, model, API Key, source, and result
 - Inspect and export request-level events with configurable table columns
 - Analyze usage trends, cost composition, model/API Key/AI Provider mix, hourly heatmaps, and latency diagnostics
+- Split RMB subscription fees per Auth File account and independent billing period using each API Key's cost share, with persisted snapshots and CSV export
 - Monitor Auth Files and AI Providers with usage metrics, health inspection, and quota refresh
 - Opt into community rankings by overall score, tokens, requests, cache rate, average TTFT/latency, or peak TPM/RPM
 - Open a read-only usage view scoped to an individual CPA API Key
 - Sync CPA Auth Files, API Keys, and AI Providers automatically, and maintain model pricing for cost estimates
 - Deploy with Docker/Docker Compose, Homebrew, binaries, or systemd, with optional password protection
 - Embed the Keeper dashboard in CPAMC through the CPA plugin
+
+### Subscription Billing
+
+After signing in as an administrator, open **Subscription billing** in the page menu (`/billing`, prefixed automatically for subpath deployments).
+
+1. Select an Auth File account. Accounts maintain independent billing periods, including shared Pro 20x accounts that renew on different dates.
+2. Create a period with a positive cycle number, exact start/end timestamps, the actual CNY fee, and an optional fee breakdown note. Initial dates come from account subscription metadata; subsequent suggestions start at the previous period's end and add one calendar month, clamped at month-end. **Review or correct all suggested dates.** Editors use the browser's local timezone and preserve seconds.
+3. Save to view each API Key's requests, successes/failures, token details, cache-read ratio, cost weight, share, and amount due. Use one API Key per participant. Stable Key IDs distinguish identical aliases and retained historical/deleted keys.
+4. Export the saved snapshot as an Excel-compatible CSV. Unsaved edits do not change displayed allocations. Explicitly confirm **Recalculate and save** to replace that account/cycle's snapshot. Refresh reloads the bill list; select a period to display its saved snapshot.
+
+Allocation rules:
+
+- Count recorded successful and failed usage in the exact **`start <= timestamp < end`** window, including hot and archived events rather than rounded hourly dashboard aggregates.
+- Round each participant's USD cost weight to four decimal places, then allocate the CNY fee proportionally. Round amounts to cents using half-even rounding and assign the residual to the highest-cost participant, breaking equal-cost ties by Key ID. The sum equals the subscription fee exactly; tiny fees that cannot satisfy the nonnegative residual rule are rejected.
+- Weights use Keeper's **currently configured model prices and pricing rules**, not actual USD payments or necessarily official provider prices.
+- Bills are SQLite snapshots. Restarts and later pricing/account changes do not silently alter saved bills. Explicit recalculation uses currently stored usage and prices; failure preserves the old snapshot.
+- Periods for one account cannot overlap, but adjacent endpoints may touch. Missing prices, unknown participant keys, empty usage, or zero total weight block saving instead of being silently treated as zero.
+- Only collected events matching the selected account's `auth_index` are included. Billing cannot recover uncollected or unattributable usage. API Key viewers cannot access administrator bills.
+
+Back up the complete data directory before upgrading. The first upgrade creates the bill table and an account/time index on archived events; indexing a large archive can extend startup time. Deleting a bill removes its snapshot, not its usage records.
 
 ## Sponsors and Special Thanks
 
@@ -435,7 +456,7 @@ Scheduled Auth Files quota refresh is configured from the gear button in the Aut
 | `BACKUP_INTERVAL` | No | `24h` | Database backup interval |
 | `BACKUP_RETENTION_DAYS` | No | `7` | Backup retention days |
 
-Keeper automatically moves raw `usage_events` older than 90 local calendar days into the permanently retained `usage_events_archive` cold table during the daily 04:30 maintenance window. The archive is reserved for future schema-migration rebuilds and is not queried by normal dashboard APIs.
+Keeper automatically moves raw `usage_events` older than 90 local calendar days into the permanently retained `usage_events_archive` cold table during the daily 04:30 maintenance window. The archive supports schema-migration rebuilds and exact historical subscription billing; normal dashboard APIs do not query it.
 
 When file logging is enabled, `cpa-usage-keeper-YYYY-MM-DD.log` contains all emitted levels. Error, fatal, and panic entries are also copied to `cpa-usage-keeper-error-YYYY-MM-DD.log`, which keeps the previous 30 local calendar dates plus the current date.
 

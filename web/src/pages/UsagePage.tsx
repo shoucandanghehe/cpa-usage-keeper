@@ -62,6 +62,7 @@ import { useLocalRankingData } from '@/features/ranking/hooks/useLocalRankingDat
 import { resolveLocalRankingPreviewAPI, resolveRankingPreviewAPI } from '@/features/ranking/previewMock';
 import { loadRankingScope, persistRankingScope } from '@/features/ranking/scope';
 import type { LocalRankingProfileRequest, RankingScope } from '@/features/ranking/types';
+import { BillingPage } from './BillingPage';
 import styles from './UsagePage.module.scss';
 
 const TIME_RANGE_STORAGE_KEY = 'cli-proxy-usage-time-range-v1';
@@ -87,6 +88,7 @@ const USAGE_TAB_LABEL_KEYS: Record<UsageTab, string> = {
   events: 'usage_stats.tab_events',
   'auth-files': 'usage_stats.tab_auth_files',
   'ai-provider': 'usage_stats.tab_ai_provider',
+  billing: 'billing.title',
   settings: 'usage_stats.tab_settings',
 };
 const USAGE_TAB_STORAGE_KEY = 'cli-proxy-usage-tab-v1';
@@ -149,7 +151,7 @@ export const getCredentialSectionVisibility = (tab: UsageTab) => ({
   showAiProvider: tab === 'ai-provider',
 });
 
-export const shouldShowRangeControls = (tab: UsageTab) => tab !== 'realtime' && tab !== 'ranking' && tab !== 'settings' && !getCredentialSectionVisibility(tab).enabled;
+export const shouldShowRangeControls = (tab: UsageTab) => tab !== 'realtime' && tab !== 'ranking' && tab !== 'settings' && tab !== 'billing' && !getCredentialSectionVisibility(tab).enabled;
 
 export const shouldShowApiKeyFilter = (tab: UsageTab) => tab === 'realtime' || shouldShowRangeControls(tab);
 
@@ -790,6 +792,7 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [versionInfo, setVersionInfo] = useState<VersionResponse | null>(null);
   const apiKeyOptionsRequestControllerRef = useRef<AbortController | null>(null);
+  const billingRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const credentialSectionVisibility = getCredentialSectionVisibility(activeTab);
   const activeCustomRange = useMemo(() => getUsageCustomRangeForTab(activeTab, customRange, {
     nowMs: Date.now(),
@@ -1749,6 +1752,10 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
 
   const refreshActiveTab = useCallback(async () => {
     if (!apiKeyFilterReady && shouldShowApiKeyFilter(activeTab)) return;
+    if (activeTab === 'billing') {
+      await billingRefreshRef.current?.();
+      return;
+    }
     if (activeTab === 'realtime') {
       await loadRealtime();
       return;
@@ -2428,6 +2435,8 @@ export function UsagePage({ onAuthRequired }: { onAuthRequired?: () => void }) {
                 </div>
               </>
             )}
+
+            <BillingPage active={activeTab === 'billing'} onAuthRequired={onAuthRequired} refreshRef={billingRefreshRef} onDownload={triggerBrowserFileDownload} />
 
             {activeTab === 'settings' && (
               <div className={styles.settingsSections}>
