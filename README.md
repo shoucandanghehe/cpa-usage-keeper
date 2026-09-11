@@ -92,11 +92,32 @@ Keep usage history for [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIP
 
 - **Keep your history**: persist CPA usage in SQLite with scheduled backups.
 - **Understand costs**: analyze usage, caching, and estimated costs by model, API Key, and provider.
+- **Split subscription fees**: allocate RMB fees per Auth File account and independent billing period using each API Key's cost share, with persisted snapshots and CSV export.
 - **Investigate requests**: inspect and export request details, and explore success rates, time to first token (TTFT), and total latency.
 - **Track quotas**: monitor credential health and remaining quotas, refresh quotas, edit priorities, and explore Codex quota history.
 - **Share scoped access**: provide a read-only usage view for an individual CPA API Key.
 
 Optional community rankings and CPA plugin embedding in CPAMC are also available. Deploy with Docker Compose, Homebrew, or binaries; login protection is enabled by default.
+
+### Subscription Billing
+
+After signing in as an administrator, open **Subscription billing** in the page menu (`/billing`, prefixed automatically for subpath deployments).
+
+1. Select an Auth File account. Accounts maintain independent billing periods, including shared Pro 20x accounts that renew on different dates.
+2. Create a period with a positive cycle number, exact start/end timestamps, the actual CNY fee, and an optional fee breakdown note. Initial dates come from account subscription metadata; subsequent suggestions start at the previous period's end and add one calendar month, clamped at month-end. **Review or correct all suggested dates.** Editors use the browser's local timezone and preserve seconds.
+3. Save to view each API Key's requests, successes/failures, token details, cache-read ratio, cost weight, share, and amount due. Use one API Key per participant. Stable Key IDs distinguish identical aliases and retained historical/deleted keys.
+4. Export the saved snapshot as an Excel-compatible CSV. Unsaved edits do not change displayed allocations. Explicitly confirm **Recalculate and save** to replace that account/cycle's snapshot. Refresh reloads the bill list; select a period to display its saved snapshot.
+
+Allocation rules:
+
+- Count recorded successful and failed usage in the exact **`start <= timestamp < end`** window, including hot and archived events rather than rounded hourly dashboard aggregates.
+- Round each participant's USD cost weight to four decimal places, then allocate the CNY fee proportionally. Round amounts to cents using half-even rounding and assign the residual to the highest-cost participant, breaking equal-cost ties by Key ID. The sum equals the subscription fee exactly; tiny fees that cannot satisfy the nonnegative residual rule are rejected.
+- Weights use Keeper's **currently configured model prices and pricing rules**, not actual USD payments or necessarily official provider prices.
+- Bills are SQLite snapshots. Restarts and later pricing/account changes do not silently alter saved bills. Explicit recalculation uses currently stored usage and prices; failure preserves the old snapshot.
+- Periods for one account cannot overlap, but adjacent endpoints may touch. Missing prices, unknown participant keys, empty usage, or zero total weight block saving instead of being silently treated as zero.
+- Only collected events matching the selected account's `auth_index` are included. Billing cannot recover uncollected or unattributable usage. API Key viewers cannot access administrator bills.
+
+Back up the complete data directory before upgrading. The first upgrade creates the bill table and an account/time index on archived events; indexing a large archive can extend startup time. Deleting a bill removes its snapshot, not its usage records.
 
 ## Sponsors and Special Thanks
 
@@ -500,7 +521,7 @@ Scheduled Auth Files quota refresh is configured from the gear button in the Aut
 | `BACKUP_RETENTION_DAYS` | No | `7` | Backup retention days |
 | `USAGE_RAW_RETENTION_DAYS` | No | `0` | Total raw-request retention in days; only archives are deleted. `0` retains archives forever; `>=90` enables cleanup. Negative values and `1–89` fall back to `0` with a warning without preventing startup |
 
-Keeper archives raw request records older than 90 local calendar days daily at 04:30 in the configured timezone. Archives are retained permanently by default. With `USAGE_RAW_RETENTION_DAYS>=90`, daily maintenance deletes expired archived records in batches after archiving, using the request timestamp and local calendar days in the configured timezone. The 90-day hot-table window remains unchanged. Normal pages do not directly query archived records; historical aggregates and backups keep their own retention policies. Deleted raw records cannot support later historical recalculation. Deletion may not immediately shrink the SQLite file: freed space can be reused and is reclaimed by the existing conditional compaction policy.
+Keeper archives raw request records older than 90 local calendar days daily at 04:30 in the configured timezone. Archives are retained permanently by default. With `USAGE_RAW_RETENTION_DAYS>=90`, daily maintenance deletes expired archived records in batches after archiving, using the request timestamp and local calendar days in the configured timezone. The 90-day hot-table window remains unchanged. The archive supports schema-migration rebuilds and exact historical subscription billing; normal dashboard APIs do not query it. Historical aggregates and backups keep their own retention policies. Deleted raw records cannot support later historical recalculation. Deletion may not immediately shrink the SQLite file: freed space can be reused and is reclaimed by the existing conditional compaction policy.
 
 When file logging is enabled, `cpa-usage-keeper-YYYY-MM-DD.log` contains all emitted levels. Error, fatal, and panic entries are also copied to `cpa-usage-keeper-error-YYYY-MM-DD.log`, which keeps the previous 30 local calendar dates plus the current date.
 

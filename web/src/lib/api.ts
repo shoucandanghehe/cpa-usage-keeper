@@ -1,6 +1,7 @@
 import { type AnalysisLatencyDiagnostics, type AnalysisResponse, type AuthFilesManagementResponse, type AuthManagedSessionsResponse, type AuthSessionResponse, type CodexQuotaHistoryResponse, type CpaApiKeyDisplayItem, type CpaApiKeyOptionsResponse, type CpaApiKeySettingsResponse, type CpaApiKeysResponse, type ErrorEventsResponse, type OverviewRealtimeBlock, type OverviewRealtimeWindow, type PricingEntry, type PricingResponse, type PricingRulesResponse, type PricingSyncPreviewResponse, type PricingSyncSource, type QuotaAutoRefreshSettings, type ReplacePricingRulesRequest, type StatusResponse, type UpdateCheckResponse, type UsageActivityRequest, type UsageActivityResponse, type UsageEventModelFilterOptionsResponse, type UsageEventRequestLogResponse, type UsageEventSourceFilterOptionsResponse, type UsageRangeRequest, type UsedModelsResponse, type UsageIdentitiesPageResponse, type UsageIdentitiesResponse, type UsageEventsResponse, type UsageIdentity, type UsageIdentityAuthType, type UsageOverviewComparisons, type UsageOverviewResponse, type UsageQuotaCacheResponse, type UsageQuotaInspectionStatusResponse, type UsageQuotaRefreshResponse, type UsageQuotaRefreshTaskResponse, type UsageQuotaResetCreditsResponse, type UsageQuotaResetResponse, type VersionResponse } from './types'
 import { isCPAMCEmbed } from '@/embed/cpamcEmbed'
 import { resolveUsageRequestRange } from '@/utils/usage/rangeQuery'
+import type { BillingAccount, BillingBill, SaveBillingBillRequest } from './billing'
 
 export class ApiError extends Error {
   status: number
@@ -286,6 +287,42 @@ export async function updateAuthSessionAlias(id: string, alias: string): Promise
     await parseApiError(response, `Failed to update auth session alias: ${response.status}`)
   }
   return response.json()
+}
+
+export async function fetchBillingAccounts(signal?: AbortSignal): Promise<{ accounts: BillingAccount[] }> {
+  const response = await apiFetch(apiPath('/billing/accounts'), { signal, cache: 'no-store' })
+  if (!response.ok) {
+    await parseApiError(response, `Failed to load billing accounts: ${response.status}`)
+  }
+  return response.json()
+}
+
+export async function fetchBillingBills(authIndex: string, signal?: AbortSignal): Promise<{ bills: BillingBill[] }> {
+  const params = new URLSearchParams({ auth_index: authIndex })
+  const response = await apiFetch(apiPath(`/billing/bills?${params}`), { signal, cache: 'no-store' })
+  if (!response.ok) {
+    await parseApiError(response, `Failed to load bills: ${response.status}`)
+  }
+  return response.json()
+}
+
+export async function saveBillingBill(request: SaveBillingBillRequest): Promise<BillingBill> {
+  const response = await apiFetch(apiPath('/billing/bills'), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!response.ok) {
+    await parseApiError(response, `Failed to save bill: ${response.status}`)
+  }
+  return response.json()
+}
+
+export async function deleteBillingBill(id: number): Promise<void> {
+  const response = await apiFetch(apiPath(`/billing/bills/${encodeURIComponent(id)}`), { method: 'DELETE' })
+  if (!response.ok) {
+    await parseApiError(response, `Failed to delete bill: ${response.status}`)
+  }
 }
 
 const buildUsageRangeParams = (request: UsageRangeRequest): URLSearchParams => {

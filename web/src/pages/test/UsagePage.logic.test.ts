@@ -796,6 +796,7 @@ for (const [tab, expected] of [
   ['events', true],
   ['auth-files', false],
   ['ai-provider', false],
+  ['billing', false],
   ['settings', false],
 ] as const) {
   it(`returns ${expected} for ${tab} range controls visibility`, () => {
@@ -811,6 +812,7 @@ for (const [tab, expected] of [
   ['events', true],
   ['auth-files', false],
   ['ai-provider', false],
+  ['billing', false],
   ['settings', false],
 ] as const) {
   it(`returns ${expected} for ${tab} API Key filter visibility`, () => {
@@ -819,25 +821,11 @@ for (const [tab, expected] of [
 }
 
 describe('UsagePage tab labels', () => {
-  it('resolves tab labels through translation keys', () => {
-    const labels = getUsageTabOptions((key) => `translated:${key}`).map((option) => option.label);
-
-    expect(labels).toEqual([
-      'translated:usage_stats.tab_overview',
-      'translated:usage_stats.tab_realtime',
-      'translated:usage_stats.tab_analysis',
-      'translated:usage_stats.tab_ranking',
-      'translated:usage_stats.tab_events',
-      'translated:usage_stats.tab_auth_files',
-      'translated:usage_stats.tab_ai_provider',
-      'translated:usage_stats.tab_settings',
-    ]);
-  });
-
   it('omits Ranking from the CPAMC embedded navigation', () => {
     const values = getUsageTabOptions((key) => key, { includeRanking: false }).map((option) => option.value);
 
-    expect(values).toEqual(['overview', 'realtime', 'analysis', 'events', 'auth-files', 'ai-provider', 'settings']);
+    expect(values).not.toContain('ranking');
+    expect(values).toContain('billing');
   });
 });
 

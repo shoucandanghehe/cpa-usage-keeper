@@ -61,6 +61,7 @@ type OptionalProviders struct {
 	RequestLogs        service.RequestLogProvider
 	Ranking            rankinghttpapi.Provider
 	LocalRanking       rankinghttpapi.LocalProvider
+	Billing            service.BillingProvider
 	Status             StatusRouteConfig
 }
 
@@ -107,6 +108,7 @@ func NewRouter(
 	var requestLogProvider service.RequestLogProvider
 	var rankingProvider rankinghttpapi.Provider
 	var localRankingProvider rankinghttpapi.LocalProvider
+	var billingProvider service.BillingProvider
 	var statusConfig StatusRouteConfig
 	if len(optionalProviders) > 0 {
 		usageIdentityProvider = optionalProviders[0].UsageIdentity
@@ -119,6 +121,7 @@ func NewRouter(
 		requestLogProvider = optionalProviders[0].RequestLogs
 		rankingProvider = optionalProviders[0].Ranking
 		localRankingProvider = optionalProviders[0].LocalRanking
+		billingProvider = optionalProviders[0].Billing
 		statusConfig = optionalProviders[0].Status
 	}
 	authHandler.setCPAAPIKeyProvider(cpaAPIKeyProvider)
@@ -147,6 +150,7 @@ func NewRouter(
 	registerCPAAPIKeyRoutes(adminProtected, cpaAPIKeyProvider)
 	registerPricingRoutes(adminProtected, pricingProvider)
 	registerQuotaRoutes(adminProtected, quotaProvider)
+	registerBillingRoutes(adminProtected, billingProvider)
 	if rankingProvider != nil {
 		rankinghttpapi.RegisterRoutes(adminProtected, rankingProvider)
 	}
