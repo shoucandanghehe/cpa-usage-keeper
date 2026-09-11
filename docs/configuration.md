@@ -66,7 +66,7 @@ All variables below are optional.
 
 See the README's [storage, logs, and backups](../README.md#storage-logs-and-backups) section for common variables.
 
-- **Archiving:** Every day at 04:30 in the configured timezone, Keeper archives raw requests older than 90 local calendar days. Normal pages do not query archive details directly.
+- **Archiving:** Every day at 04:30 in the configured timezone, Keeper archives raw requests older than 90 local calendar days. Archives support schema-migration rebuilds and exact historical subscription billing; normal dashboard APIs do not query archive details.
 - **Deletion:** Archives are retained indefinitely by default. With `USAGE_RAW_RETENTION_DAYS>=90`, expired archives are removed by request date without changing the recent 90-day window. Historical aggregates and backups have separate retention policies.
 - **Impact:** Deleted raw records cannot support historical recalculation, and the SQLite file may not immediately shrink.
 

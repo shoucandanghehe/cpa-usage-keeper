@@ -6,6 +6,7 @@ export const USAGE_TAB_OPTIONS = [
   'credentials',
   'ai-provider',
   'models',
+  'billing',
   'settings',
 ] as const;
 
@@ -20,6 +21,7 @@ const USAGE_TAB_PATHS: Record<UsageTab, string> = {
   'credentials': '/credentials',
   'ai-provider': '/ai-provider',
   models: '/models',
+  billing: '/billing',
   settings: '/settings',
 };
 

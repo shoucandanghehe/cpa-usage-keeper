@@ -94,11 +94,32 @@ Keep usage history for [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIP
 
 - **Keep your history**: persist CPA usage in SQLite with scheduled backups.
 - **Understand costs**: analyze usage, caching, and estimated costs by model, API Key, and provider.
+- **Split subscription fees**: allocate RMB fees per credential account and independent billing period using each API Key's cost share, with persisted snapshots and CSV export.
 - **Investigate requests**: inspect and export request details, and explore success rates, time to first token (TTFT), and total latency.
 - **Track quotas**: monitor credential health and remaining quotas, refresh quotas, edit priorities, and explore Codex quota history.
 - **Share scoped access**: provide a read-only usage view for an individual CPA API Key.
 
 CPA plugin embedding in CPAMC is also available. Deploy with Docker Compose, Homebrew, or binaries; login protection is enabled by default.
+
+### Subscription Billing
+
+After signing in as an administrator, open **Subscription billing** in the page menu (`/billing`, prefixed automatically for subpath deployments).
+
+1. Select a credential account. Accounts maintain independent billing periods, including shared Pro 20x accounts that renew on different dates.
+2. Create a period with a positive cycle number, exact start/end timestamps, the actual CNY fee, and an optional fee breakdown note. Initial dates come from account subscription metadata; subsequent suggestions start at the previous period's end and add one calendar month, clamped at month-end. **Review or correct all suggested dates.** Editors use the browser's local timezone and preserve seconds.
+3. Save to view each API Key's requests, successes/failures, token details, cache-read ratio, cost weight, share, and amount due. Use one API Key per participant. Stable Key IDs distinguish identical aliases and retained historical/deleted keys.
+4. Export the saved snapshot as an Excel-compatible CSV. Unsaved edits do not change displayed allocations. Explicitly confirm **Recalculate and save** to replace that account/cycle's snapshot. Refresh reloads the bill list; select a period to display its saved snapshot.
+
+Allocation rules:
+
+- Count recorded successful and failed usage in the exact **`start <= timestamp < end`** window, including hot and archived events rather than rounded hourly dashboard aggregates.
+- Round each participant's USD cost weight to four decimal places, then allocate the CNY fee proportionally. Round amounts to cents using half-even rounding and assign the residual to the highest-cost participant, breaking equal-cost ties by Key ID. The sum equals the subscription fee exactly; tiny fees that cannot satisfy the nonnegative residual rule are rejected.
+- Weights use Keeper's **currently configured model prices and pricing rules**, not actual USD payments or necessarily official provider prices.
+- Bills are SQLite snapshots. Restarts and later pricing/account changes do not silently alter saved bills. Explicit recalculation uses currently stored usage and prices; failure preserves the old snapshot.
+- Periods for one account cannot overlap, but adjacent endpoints may touch. Missing prices, unknown participant keys, empty usage, or zero total weight block saving instead of being silently treated as zero.
+- Only collected events matching the selected account's `auth_index` are included. Billing cannot recover uncollected or unattributable usage. API Key viewers cannot access administrator bills.
+
+Back up the complete data directory before upgrading. The first upgrade creates the bill table and an account/time index on archived events; indexing a large archive can extend startup time. Deleting a bill removes its snapshot, not its usage records.
 
 ## Sponsors and Special Thanks
 
@@ -464,7 +485,7 @@ For Docker/Compose, keep `APP_HOST` empty; publish `127.0.0.1:8080:8080` for hos
 | `BACKUP_RETENTION_DAYS` | No | `7` | Backup retention days |
 | `USAGE_RAW_RETENTION_DAYS` | No | `0` | Total raw-request retention in days; only archives are deleted. `0` retains archives forever; `>=90` enables cleanup. Negative values and `1–89` fall back to `0` with a warning without preventing startup |
 
-Raw requests are archived after 90 days and retained indefinitely by default; set `USAGE_RAW_RETENTION_DAYS>=90` to remove expired archives. Deleted records cannot support historical recalculation, and deletion may not immediately shrink the database file. See [storage and log details](./docs/configuration.md#storage-and-log-details).
+Raw requests are archived after 90 days and retained indefinitely by default; set `USAGE_RAW_RETENTION_DAYS>=90` to remove expired archives. Archives support exact historical subscription billing. Deleted records cannot support historical recalculation, and deletion may not immediately shrink the database file. See [storage and log details](./docs/configuration.md#storage-and-log-details).
 
 ### Rolling Back A Failed v1-to-v2 Upgrade
 
