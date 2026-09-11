@@ -100,6 +100,18 @@ Allocation rules:
 
 Back up the complete data directory before upgrading. The first upgrade creates the bill table and an account/time index on archived events; indexing a large archive can extend startup time. Deleting a bill removes its snapshot, not its usage records.
 
+#### Switching Between This Fork and Upstream Releases
+
+The following sequence was verified against the corresponding Git tags' backend source using one isolated database:
+
+**Create with `v1.15.1` → billing fork → upstream `v1.15.3` → billing fork**
+
+Hot/archived usage, application settings, and login sessions survived every switch, and upstream continued to write usage. Upstream has no billing UI/API, but preserves the billing table and saved snapshots. Switching back restores access to those unchanged snapshots; explicit recalculation includes usage added while running upstream. SQLite integrity and foreign-key checks passed at every stage. `v1.15.3` was the latest stable release when verified on 2026-09-11.
+
+- Stop the current Keeper instance before starting the other version. Mount the same complete data directory (for example, `./keeper:/data`) and retain timezone/authentication configuration. Do not run two collectors against the same CPA concurrently.
+- Back up the complete data directory first. Normal switching **does not require restoring an old backup, deleting migration records, or clearing the database**. Restoring an old backup discards usage and bills written since that backup.
+- This compatibility range is not a guarantee for arbitrary older versions or future releases. Repeat the sequence against a data copy before adopting an unverified release, particularly when it adds database migrations.
+
 ## Sponsors and Special Thanks
 
 - Thanks to [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) for providing the upstream CPA foundation and data source this project builds on.
