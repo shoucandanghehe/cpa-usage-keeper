@@ -59,6 +59,7 @@ type OptionalProviders struct {
 	CredentialStatus   service.CredentialStatusProvider
 	CredentialPriority service.CredentialPriorityProvider
 	RequestLogs        service.RequestLogProvider
+	Billing            service.BillingProvider
 	Status             StatusRouteConfig
 }
 
@@ -111,6 +112,7 @@ func NewRouter(
 	var credentialStatusProvider service.CredentialStatusProvider
 	var credentialPriorityProvider service.CredentialPriorityProvider
 	var requestLogProvider service.RequestLogProvider
+	var billingProvider service.BillingProvider
 	var statusConfig StatusRouteConfig
 	if len(optionalProviders) > 0 {
 		usageIdentityProvider = optionalProviders[0].UsageIdentity
@@ -122,6 +124,7 @@ func NewRouter(
 		credentialStatusProvider = optionalProviders[0].CredentialStatus
 		credentialPriorityProvider = optionalProviders[0].CredentialPriority
 		requestLogProvider = optionalProviders[0].RequestLogs
+		billingProvider = optionalProviders[0].Billing
 		statusConfig = optionalProviders[0].Status
 	}
 	authHandler.setCPAAPIKeyProvider(cpaAPIKeyProvider)
@@ -151,6 +154,7 @@ func NewRouter(
 	registerCPAAPIKeyRoutes(adminProtected, cpaAPIKeyProvider, usageProvider)
 	registerPricingRoutes(adminProtected, pricingProvider)
 	registerQuotaRoutes(adminProtected, quotaProvider)
+	registerBillingRoutes(adminProtected, billingProvider)
 
 	keyViewerProtected := apiV1.Group("")
 	keyViewerProtected.Use(authHandler.apiKeyViewerMiddleware())

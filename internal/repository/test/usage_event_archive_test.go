@@ -24,7 +24,7 @@ type sqliteTableColumn struct {
 	PrimaryKey int            `gorm:"column:pk"`
 }
 
-func TestUsageEventArchiveSchemaMatchesHotColumnsWithoutSecondaryIndexes(t *testing.T) {
+func TestUsageEventArchiveSchemaMatchesHotColumns(t *testing.T) {
 	db := openTestDatabase(t)
 
 	hotColumns := loadSQLiteTableColumns(t, db, "usage_events")
@@ -47,14 +47,6 @@ func TestUsageEventArchiveSchemaMatchesHotColumnsWithoutSecondaryIndexes(t *test
 	}
 	if strings.Contains(strings.ToUpper(archiveSQL), "AUTOINCREMENT") {
 		t.Fatalf("expected archive primary key not to use AUTOINCREMENT, got %s", archiveSQL)
-	}
-
-	var archiveIndexes []string
-	if err := db.Raw("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ? ORDER BY name", "usage_events_archive").Scan(&archiveIndexes).Error; err != nil {
-		t.Fatalf("load usage_events_archive indexes: %v", err)
-	}
-	if len(archiveIndexes) != 0 {
-		t.Fatalf("expected archive to have no secondary indexes, got %v", archiveIndexes)
 	}
 }
 

@@ -6,7 +6,7 @@ import "time"
 const UsageEventStorageColumns = "id, event_key, api_group_key, provider, endpoint, auth_type, request_id, execution_id, trace_id, session_id, parent_session_id, node_kind, is_fork, is_compaction, client_ip, x_forwarded_for, user_agent, model, model_alias, response_model, reasoning_effort, service_tier, effective_service_tier, response_service_tier, executor_type, timestamp, source, auth_index, failed, status_code, generate, stream, latency_ms, ttft_ms, input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, cost_usd, cost_available, created_at"
 
 // UsageEventArchive 保存已经离开 hot usage_events 的原始事件，默认永久保留，可配置清理期限。
-// 字段必须与 UsageEvent 的持久化列保持一致，但 archive 不承担在线查询，因此不复制二级索引。
+// 字段必须与 UsageEvent 的持久化列保持一致，只保留账单所需的账号/时间索引，不复制 hot 的其它在线查询索引。
 type UsageEventArchive struct {
 	ID                   int64 `gorm:"primaryKey;autoIncrement:false"`
 	EventKey             string
@@ -33,9 +33,9 @@ type UsageEventArchive struct {
 	EffectiveServiceTier string    `gorm:"column:effective_service_tier;not null;default:''"`
 	ResponseServiceTier  string    `gorm:"column:response_service_tier;not null;default:''"`
 	ExecutorType         string    `gorm:"column:executor_type;not null;default:''"`
-	Timestamp            time.Time `gorm:"serializer:storageTime"`
+	Timestamp            time.Time `gorm:"serializer:storageTime;index:idx_usage_archive_auth_index_timestamp,priority:2"`
 	Source               string
-	AuthIndex            string
+	AuthIndex            string `gorm:"index:idx_usage_archive_auth_index_timestamp,priority:1"`
 	Failed               bool
 	StatusCode           *int  `gorm:"column:status_code"`
 	Generate             *bool `gorm:"column:generate;not null;default:true"`

@@ -25,6 +25,7 @@ func TestAllIncludesCoreModels(t *testing.T) {
 		&PricingMigrationState{},
 		&UsageIdentity{},
 		&CPAAPIKey{},
+		&BillingBill{},
 		&UsageOverviewHourlyStat{},
 		&UsageOverviewDailyStat{},
 		// 全局聚合只注册一张通用 checkpoint 表。

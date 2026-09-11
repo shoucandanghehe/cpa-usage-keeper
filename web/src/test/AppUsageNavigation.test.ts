@@ -6,12 +6,14 @@ describe('App usage-page route authorization', () => {
     expect(getRoleHomePath('admin')).toBe('/');
     expect(shouldNormalizeRolePath('admin', '/key-overview')).toBe(true);
     expect(shouldNormalizeRolePath('admin', '/')).toBe(false);
+    expect(shouldNormalizeRolePath('admin', '/billing')).toBe(false);
   });
 
   it('normalizes restored API Key viewer sessions to the key overview route', () => {
     expect(getRoleHomePath('api_key_viewer')).toBe('/key-overview');
     expect(shouldNormalizeRolePath('api_key_viewer', '/')).toBe(true);
     expect(shouldNormalizeRolePath('api_key_viewer', '/key-overview')).toBe(false);
+    expect(shouldNormalizeRolePath('api_key_viewer', '/billing')).toBe(true);
   });
 
   it('allows only known usage routes for administrators', () => {

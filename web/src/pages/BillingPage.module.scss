@@ -1,0 +1,147 @@
+@use '../styles/mixins' as *;
+
+.page {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+  color: var(--text-primary);
+
+  :global(.card) { min-width: 0; }
+  :global(.form-group) { margin-bottom: 0; }
+}
+
+.intro {
+  display: grid;
+  gap: 8px;
+
+  h2, p { margin: 0; }
+  h2 { font-size: 24px; }
+  p { line-height: 1.65; }
+}
+
+.hint {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.accountSelector {
+  display: grid;
+  gap: 8px;
+  max-width: 720px;
+
+  label { font-size: 14px; font-weight: 600; }
+  p { margin: 0; }
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.5fr);
+  align-items: start;
+  gap: 20px;
+}
+
+.billList {
+  display: grid;
+  gap: 8px;
+  max-height: 510px;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 2px;
+}
+
+.billChoice {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+
+  &[aria-pressed='true'] {
+    border-color: var(--text-primary);
+    background: var(--bg-primary);
+  }
+  &:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
+  &:disabled { cursor: wait; opacity: 0.6; }
+}
+
+.billHeading {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.form { display: grid; gap: 14px; }
+.formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.form p { margin: 0; }
+.noteInput { min-height: 84px; resize: vertical; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.notice { margin: 0; padding: 12px 16px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-secondary); }
+
+.summary, .boundaries {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin: 0 0 22px;
+
+  dt { color: var(--text-secondary); font-size: 12px; margin-bottom: 6px; }
+  dd { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+  code { display: block; color: var(--text-secondary); font-size: 12px; }
+}
+
+.boundaries { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.boundaries > div:last-child { grid-column: 1 / -1; }
+.note { white-space: pre-wrap; }
+.amount { font-weight: 700; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.summary .amount { font-size: 24px; }
+.tableScroll { width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+
+  caption { text-align: start; font-weight: 600; font-size: 15px; margin-bottom: 12px; }
+  th, td { border-bottom: 1px solid var(--border-color); padding: 12px 10px; text-align: end; white-space: nowrap; vertical-align: top; }
+  thead th { color: var(--text-secondary); font-weight: 500; }
+  th:first-child { text-align: start; }
+  tbody th { font-weight: 500; }
+  summary { cursor: pointer; }
+}
+
+.memberName { display: block; min-width: 90px; max-width: 240px; white-space: normal; overflow-wrap: anywhere; }
+.tokenDetails {
+  margin: 10px 0 0;
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+
+  div { display: flex; justify-content: space-between; gap: 14px; }
+  dt { color: var(--text-secondary); }
+  dd { margin: 0; }
+}
+
+@include mobile {
+  .page { gap: 14px; }
+  .workspace, .formGrid, .boundaries { grid-template-columns: minmax(0, 1fr); }
+  .workspace { gap: 14px; }
+  .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .billList { max-height: 240px; }
+  .actions { width: 100%; }
+  .formGrid input { min-width: 0; max-width: 100%; }
+}
