@@ -1,6 +1,9 @@
 name: Publish dev Docker image
 
 on:
+  push:
+    branches:
+      - feat/subscription-billing
   workflow_dispatch:
     inputs:
       specific_tag:
@@ -72,6 +75,7 @@ jobs:
           tags: |
             type=raw,value=dev
             type=raw,value=${{ steps.dev_tag.outputs.specific_tag }}
+            type=sha,prefix=${{ steps.dev_tag.outputs.specific_tag }}-,format=long
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
@@ -91,5 +95,6 @@ jobs:
           build-args: |
             NODE_IMAGE=node:24-alpine3.24
             GO_IMAGE=golang:1.26-alpine3.24
+            VERSION=${{ steps.dev_tag.outputs.specific_tag }}-${{ github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
