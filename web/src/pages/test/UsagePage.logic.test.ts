@@ -828,7 +828,7 @@ describe('UsagePage tab labels', () => {
       'translated:usage_stats.tab_events',
       'translated:usage_stats.tab_credentials',
       'translated:usage_stats.tab_ai_provider',
-      'translated:usage_stats.tab_billing',
+      'translated:billing.title',
       'translated:usage_stats.tab_settings',
     ]);
   });

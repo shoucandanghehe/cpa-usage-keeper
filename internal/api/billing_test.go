@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,7 +15,6 @@ import (
 	"cpa-usage-keeper/internal/auth"
 	"cpa-usage-keeper/internal/config"
 	"cpa-usage-keeper/internal/entities"
-	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/repository"
 	"cpa-usage-keeper/internal/repository/dto"
 	"cpa-usage-keeper/internal/service"
@@ -45,15 +45,11 @@ func TestBillingHTTPAdminIsolationAndFailClosedSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	event := entities.UsageEvent{AuthIndex: identity.Identity, APIGroupKey: secret, Model: "priced", Timestamp: start, InputTokens: 1000000, TotalTokens: 1000000}
+	cost, available := 1.0, true
+	event := entities.UsageEvent{AuthIndex: identity.Identity, APIGroupKey: secret, Model: "priced", Timestamp: start, InputTokens: 1000000, TotalTokens: 1000000, CostUSD: &cost, CostAvailable: &available}
 	if err := db.Create(&event).Error; err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := pricing.CompileSnapshot([]pricing.ModelConfig{{Pricing: entities.ModelPriceSetting{Model: "priced", PromptPricePer1M: 1}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	catalog := pricing.NewCatalog(snapshot)
 	sessions := auth.NewSessionManager(time.Hour)
 	admin, _, err := sessions.Create()
 	if err != nil {
@@ -64,8 +60,9 @@ func TestBillingHTTPAdminIsolationAndFailClosedSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	authConfig := AuthConfig{Enabled: true, LoginPassword: "test-password", SessionTTL: time.Hour, BasePath: "/keeper"}
+	gate := service.NewCostReadGate()
 	router := NewRouter(fstest.MapFS{"index.html": {Data: []byte("<html>billing-shell</html>")}}, nil, nil, nil, authConfig, NewAuthHandler(authConfig, sessions), "/keeper", OptionalProviders{
-		Billing: service.NewBillingService(db, catalog), CPAAPIKeys: service.NewCPAAPIKeyService(db),
+		Billing: service.NewBillingService(db), CPAAPIKeys: service.NewCPAAPIKeyService(db), CostReadGate: gate,
 	})
 	call := func(method, path, body, token string, intent bool) *httptest.ResponseRecorder {
 		t.Helper()
@@ -139,7 +136,23 @@ func TestBillingHTTPAdminIsolationAndFailClosedSnapshots(t *testing.T) {
 			t.Fatalf("%s %s: %d %s", input.method, input.path, response.Code, response.Body.String())
 		}
 	}
-	catalog.Replace(pricing.EmptySnapshot())
+	resume, err := gate.BlockAndDrain(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(resume)
+	response = call(http.MethodPut, "/api/v1/billing/bills", body, admin, true)
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"code":"costs_busy"`) {
+		t.Fatalf("billing save bypassed cost recalculation gate: %d %s", response.Code, response.Body.String())
+	}
+	response = call(http.MethodGet, "/api/v1/billing/bills?auth_index=account-http", "", admin, true)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"total_cost_usd":1`) {
+		t.Fatalf("saved snapshot blocked during cost recalculation: %d %s", response.Code, response.Body.String())
+	}
+	resume()
+	if err := db.Model(&entities.UsageEvent{}).Where("id = ?", event.ID).UpdateColumn("cost_available", false).Error; err != nil {
+		t.Fatal(err)
+	}
 	response = call(http.MethodPut, "/api/v1/billing/bills", body, admin, true)
 	if response.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("unpriced recalculation accepted: %d %s", response.Code, response.Body.String())

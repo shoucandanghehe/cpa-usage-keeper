@@ -42,6 +42,8 @@ func isCostReadRoute(method, path string) bool {
 		}
 	case http.MethodPost:
 		return path == "/api/v1/quota/cache" || path == "/api/v1/quota/refresh"
+	case http.MethodPut:
+		return path == "/api/v1/billing/bills"
 	}
 	return false
 }

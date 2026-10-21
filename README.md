@@ -114,24 +114,20 @@ Allocation rules:
 
 - Count recorded successful and failed usage in the exact **`start <= timestamp < end`** window, including hot and archived events rather than rounded hourly dashboard aggregates.
 - Round each participant's USD cost weight to four decimal places, then allocate the CNY fee proportionally. Round amounts to cents using half-even rounding and assign the residual to the highest-cost participant, breaking equal-cost ties by Key ID. The sum equals the subscription fee exactly; tiny fees that cannot satisfy the nonnegative residual rule are rejected.
-- Weights use Keeper's **currently configured model prices and pricing rules**, not actual USD payments or necessarily official provider prices.
-- Bills are SQLite snapshots. Restarts and later pricing/account changes do not silently alter saved bills. Explicit recalculation uses currently stored usage and prices; failure preserves the old snapshot.
-- Periods for one account cannot overlap, but adjacent endpoints may touch. Missing prices, unknown participant keys, empty usage, or zero total weight block saving instead of being silently treated as zero.
+- Weights use each event's **persisted USD cost**, calculated by Keeper's model prices and pricing rules at ingestion or explicit historical cost recalculation. They are allocation weights, not actual USD payments or necessarily official provider prices.
+- Bills are SQLite snapshots. Restarts and later pricing/account changes do not silently alter saved bills. Explicit bill recalculation uses currently stored usage costs; changing price settings alone does not reprice history. Failure preserves the old snapshot.
+- Periods for one account cannot overlap, but adjacent endpoints may touch. Unavailable or unbackfilled event costs, unknown participant keys, empty usage, or zero total weight block saving instead of being silently treated as zero. Bill calculation is temporarily unavailable during historical cost recalculation; saved snapshots remain readable.
 - Only collected events matching the selected account's `auth_index` are included. Billing cannot recover uncollected or unattributable usage. API Key viewers cannot access administrator bills.
 
 Back up the complete data directory before upgrading. The first upgrade creates the bill table and an account/time index on archived events; indexing a large archive can extend startup time. Deleting a bill removes its snapshot, not its usage records.
 
-#### Switching Between This Fork and Upstream Releases
+#### v2 Upgrade and Historical Compatibility
 
-The following sequence was verified against the corresponding Git tags' backend source using one isolated database:
+This branch now follows upstream **v2** and requires CPA v8. Follow the upgrade and rollback instructions below: back up the complete data directory before the first v2 startup. Returning to v1 requires restoring the pre-upgrade backup; do not point a v1 executable at the upgraded database.
 
-**Create with `v1.15.1` → billing fork → upstream `v1.15.3` → billing fork**
+The earlier **v1-based** billing fork was verified on 2026-09-11 with this sequence: `v1.15.1` → billing fork → upstream `v1.15.3` → billing fork. Usage, settings, sessions, and saved bill snapshots survived, upstream could add usage, and SQLite integrity/foreign-key checks passed. **That result does not cover this v2 branch or establish v1/v2 database interchangeability.**
 
-Hot/archived usage, application settings, and login sessions survived every switch, and upstream continued to write usage. Upstream has no billing UI/API, but preserves the billing table and saved snapshots. Switching back restores access to those unchanged snapshots; explicit recalculation includes usage added while running upstream. SQLite integrity and foreign-key checks passed at every stage. `v1.15.3` was the latest stable release when verified on 2026-09-11.
-
-- Stop the current Keeper instance before starting the other version. Mount the same complete data directory (for example, `./keeper:/data`) and retain timezone/authentication configuration. Do not run two collectors against the same CPA concurrently.
-- Back up the complete data directory first. Normal switching **does not require restoring an old backup, deleting migration records, or clearing the database**. Restoring an old backup discards usage and bills written since that backup.
-- This compatibility range is not a guarantee for arbitrary older versions or future releases. Repeat the sequence against a data copy before adopting an unverified release, particularly when it adds database migrations.
+Stop the current instance before switching versions, retain timezone/authentication settings, and verify untested releases against a data copy first. Do not run two collectors against the same CPA concurrently.
 
 ## Sponsors and Special Thanks
 
