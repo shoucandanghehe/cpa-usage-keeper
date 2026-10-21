@@ -95,10 +95,8 @@ func StreamBillingUsage(tx *gorm.DB, authIndex string, start, end time.Time, vis
 	if end.UTC().Add(24*time.Hour).Year() > 9999 {
 		upper = ":" // sorts after every four-digit RFC3339 year
 	}
-	const columns = `id, api_group_key, model, model_alias, auth_index, timestamp,
-		service_tier, response_service_tier, reasoning_effort, endpoint, executor_type,
-		failed, input_tokens, output_tokens, reasoning_tokens, cache_read_tokens,
-		cache_creation_tokens, total_tokens`
+	const columns = `id, api_group_key, timestamp, failed, input_tokens, output_tokens,
+		reasoning_tokens, cache_read_tokens, total_tokens, cost_usd, cost_available`
 	for _, table := range []string{"usage_events", "usage_events_archive"} {
 		query := tx.Table(table).Select(columns).
 			Where("auth_index = ? AND timestamp >= ? AND timestamp < ?", authIndex, lower, upper).

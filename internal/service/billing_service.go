@@ -15,7 +15,6 @@ import (
 
 	"cpa-usage-keeper/internal/entities"
 	"cpa-usage-keeper/internal/helper"
-	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/repository"
 	"cpa-usage-keeper/internal/repository/dto"
 	"cpa-usage-keeper/internal/timeutil"
@@ -42,12 +41,11 @@ type BillingProvider interface {
 }
 
 type billingService struct {
-	db      *gorm.DB
-	catalog *pricing.Catalog
+	db *gorm.DB
 }
 
-func NewBillingService(db *gorm.DB, catalog *pricing.Catalog) BillingProvider {
-	return &billingService{db: db, catalog: catalog}
+func NewBillingService(db *gorm.DB) BillingProvider {
+	return &billingService{db: db}
 }
 
 func (s *billingService) ListBillingAccounts(ctx context.Context) ([]dto.BillingAccount, error) {
@@ -123,9 +121,6 @@ func (s *billingService) SaveBillingBill(ctx context.Context, request dto.SaveBi
 	if err != nil {
 		return dto.BillingBill{}, err
 	}
-	// One resolver per operation keeps model aliases, tiers, and request/token
-	// normalization on the same canonical price/rule snapshot as Usage.
-	resolver := s.catalog.NewResolver()
 	var bill dto.BillingBill
 	err = s.db.WithContext(ctx).Clauses(dbresolver.Write).Transaction(func(tx *gorm.DB) error {
 		identity, err := repository.FindBillingAccountIdentity(tx, request.AuthIndex)
@@ -138,7 +133,7 @@ func (s *billingService) SaveBillingBill(ctx context.Context, request dto.SaveBi
 		}
 		redact := billingRedactor(keys)
 		account := billingAccount(identity, redact)
-		members, events, total, err := calculateBillingUsage(tx, resolver, keys, redact, request.AuthIndex, start, end, fee)
+		members, events, total, err := calculateBillingUsage(tx, keys, redact, request.AuthIndex, start, end, fee)
 		if err != nil {
 			return err
 		}
@@ -282,7 +277,7 @@ type billingAccumulator struct {
 	costUnits    int64
 }
 
-func calculateBillingUsage(tx *gorm.DB, resolver pricing.Resolver, keys []entities.CPAAPIKey, redact func(string) string, authIndex string, start, end time.Time, fee int64) ([]dto.BillingMember, int64, float64, error) {
+func calculateBillingUsage(tx *gorm.DB, keys []entities.CPAAPIKey, redact func(string) string, authIndex string, start, end time.Time, fee int64) ([]dto.BillingMember, int64, float64, error) {
 	byKey := make(map[string]entities.CPAAPIKey, len(keys))
 	for _, key := range keys {
 		byKey[key.APIKey] = key
@@ -294,12 +289,12 @@ func calculateBillingUsage(tx *gorm.DB, resolver pricing.Resolver, keys []entiti
 		if event.APIGroupKey == "" || !known || key.ID <= 0 || key.ID > billingMaxSafeInteger {
 			return fmt.Errorf("%w: an event has no known participant API key; sync key metadata before saving", ErrBillingIncomplete)
 		}
-		cost := resolver.Calculate(repository.UsageEventCostSubject(event))
-		if !cost.Available || cost.MatchedModel == "" {
-			return fmt.Errorf("%w: a model used in this window has no configured price", ErrBillingIncomplete)
+		if event.CostUSD == nil || event.CostAvailable == nil || !*event.CostAvailable {
+			return fmt.Errorf("%w: an event has no available stored cost; configure prices and recalculate usage costs before saving", ErrBillingIncomplete)
 		}
-		if math.IsNaN(cost.Cost.TotalCostUSD) || math.IsInf(cost.Cost.TotalCostUSD, 0) || cost.Cost.TotalCostUSD < 0 {
-			return fmt.Errorf("%w: invalid calculated usage cost", ErrBillingIncomplete)
+		cost := *event.CostUSD
+		if math.IsNaN(cost) || math.IsInf(cost, 0) || cost < 0 {
+			return fmt.Errorf("%w: invalid stored usage cost", ErrBillingIncomplete)
 		}
 		member := byMember[key.ID]
 		if member == nil {
@@ -327,7 +322,7 @@ func calculateBillingUsage(tx *gorm.DB, resolver pricing.Resolver, keys []entiti
 		}
 		// Compensated summation avoids a large history's accumulation drift
 		// before the agreed per-member four-decimal weighting quantization.
-		increment := cost.Cost.TotalCostUSD - member.compensation
+		increment := cost - member.compensation
 		total := member.cost + increment
 		member.compensation = (total - member.cost) - increment
 		member.cost = total

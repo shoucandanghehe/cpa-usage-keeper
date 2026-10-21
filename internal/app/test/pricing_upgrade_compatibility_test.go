@@ -56,6 +56,14 @@ func TestPricingLegacyStartupKeepsHistoryAvailableWithoutCPAVersionGate(t *testi
 				upstream.Close()
 			}
 			seed := seedPublishedPricingRuntime(t, cfg)
+			bill := entities.BillingBill{
+				AuthIndex: "legacy-account", Cycle: 1,
+				WindowStart: "2026-09-01T00:00:00Z", WindowEnd: "2026-10-01T00:00:00Z",
+				SnapshotJSON: `{"account":"Legacy account","alias":"","plan":"Pro20x","fee_cents":10000,"fee_note":"before v2","calculated_at":"2026-09-24T00:00:00Z","events":1,"total_cost_usd":4,"members":[{"api_key_id":1,"name":"Member","requests":1,"success":1,"failure":0,"total_tokens":100,"input_tokens":100,"output_tokens":0,"reasoning_tokens":0,"cache_read_tokens":0,"cost_usd":4,"share":1,"amount_cents":10000}]}`,
+			}
+			if err := seed.Create(&bill).Error; err != nil {
+				t.Fatal(err)
+			}
 			closePricingStartupPools(t, seed, seed)
 			runtime := startPricingEvidenceRuntime(t, cfg)
 			application := runtime.app
@@ -68,6 +76,14 @@ func TestPricingLegacyStartupKeepsHistoryAvailableWithoutCPAVersionGate(t *testi
 			status, body = pricingRuntimeRequest(t, http.MethodGet, baseURL+"/api/v1/usage/events?range=custom&start=2026-09-23&end=2026-09-24", nil)
 			if status != http.StatusOK || !strings.Contains(string(body), `"model":"old-model"`) || !strings.Contains(string(body), `"input_tokens":100`) {
 				t.Fatalf("CPA %s prevented local history reads: %d %s", scenario, status, body)
+			}
+			var saved entities.BillingBill
+			if err := application.DB.First(&saved, bill.ID).Error; err != nil || saved.SnapshotJSON != bill.SnapshotJSON {
+				t.Fatalf("v2 upgrade changed the saved bill snapshot: %+v %v", saved, err)
+			}
+			status, body = pricingRuntimeRequest(t, http.MethodGet, baseURL+"/api/v1/billing/bills?auth_index=legacy-account", nil)
+			if status != http.StatusOK || !strings.Contains(string(body), `"amount_cents":10000`) || !strings.Contains(string(body), `"total_cost_usd":4`) {
+				t.Fatalf("v2 upgrade hid the saved bill: %d %s", status, body)
 			}
 			var state entities.PricingMigrationState
 			if err := application.DB.Take(&state).Error; err != nil || !state.DataComplete || state.BackupPath == nil {

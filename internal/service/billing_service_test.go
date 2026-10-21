@@ -13,7 +13,6 @@ import (
 
 	"cpa-usage-keeper/internal/config"
 	"cpa-usage-keeper/internal/entities"
-	"cpa-usage-keeper/internal/pricing"
 	"cpa-usage-keeper/internal/repository"
 	"cpa-usage-keeper/internal/repository/dto"
 
@@ -23,7 +22,6 @@ import (
 type billingFixture struct {
 	db      *gorm.DB
 	readDB  *gorm.DB
-	catalog *pricing.Catalog
 	service BillingProvider
 	cfg     config.Config
 	request dto.SaveBillingBillRequest
@@ -41,8 +39,7 @@ func newBillingFixture(t *testing.T) *billingFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { f.close(t) })
-	f.catalog = billingTestCatalog(t, 1)
-	f.service = NewBillingService(f.db, f.catalog)
+	f.service = NewBillingService(f.db)
 	f.start = time.Date(2026, 5, 1, 0, 0, 0, 500000000, time.UTC)
 	f.end = f.start.Add(2 * time.Second)
 	f.request = dto.SaveBillingBillRequest{AuthIndex: "account-a", Cycle: 1,
@@ -64,13 +61,14 @@ func newBillingFixture(t *testing.T) *billingFixture {
 		t.Fatal(err)
 	}
 	alias := "priced-model"
+	priorityCost, standardCost, available := 2.0, 1.0, true
 	events := []entities.UsageEvent{
-		{ID: 101, AuthIndex: "account-a", APIGroupKey: f.keys[0].APIKey, Timestamp: f.start, Model: "unlisted-upstream-model", ModelAlias: &alias, ResponseServiceTier: "priority", InputTokens: 1000000, TotalTokens: 1000000},
-		{ID: 102, AuthIndex: "account-a", APIGroupKey: f.keys[1].APIKey, Timestamp: f.start.Add(time.Second), Model: "priced-model", Failed: true, InputTokens: 1000000, TotalTokens: 1000000},
-		{ID: 103, AuthIndex: "account-a", APIGroupKey: f.keys[0].APIKey, Timestamp: f.end.Add(-time.Nanosecond), Model: "priced-model", Failed: true, InputTokens: 1000000, TotalTokens: 1000000},
+		{ID: 101, AuthIndex: "account-a", APIGroupKey: f.keys[0].APIKey, Timestamp: f.start, Model: "unlisted-upstream-model", ModelAlias: &alias, ResponseServiceTier: "priority", InputTokens: 1000000, TotalTokens: 1000000, CostUSD: &priorityCost, CostAvailable: &available},
+		{ID: 102, AuthIndex: "account-a", APIGroupKey: f.keys[1].APIKey, Timestamp: f.start.Add(time.Second), Model: "priced-model", Failed: true, InputTokens: 1000000, TotalTokens: 1000000, CostUSD: &standardCost, CostAvailable: &available},
+		{ID: 103, AuthIndex: "account-a", APIGroupKey: f.keys[0].APIKey, Timestamp: f.end.Add(-time.Nanosecond), Model: "priced-model", Failed: true, InputTokens: 1000000, TotalTokens: 1000000, CostUSD: &standardCost, CostAvailable: &available},
 		{ID: 104, AuthIndex: "account-a", APIGroupKey: "unknown-before", Timestamp: f.start.Add(-time.Nanosecond), Model: "unpriced", InputTokens: 1000000},
 		{ID: 105, AuthIndex: "account-a", APIGroupKey: "unknown-at-exclusive-end", Timestamp: f.end, Model: "unpriced", InputTokens: 1000000},
-		{ID: 106, AuthIndex: "account-b", APIGroupKey: f.keys[0].APIKey, Timestamp: f.start, Model: "priced-model", InputTokens: 1000000, TotalTokens: 1000000},
+		{ID: 106, AuthIndex: "account-b", APIGroupKey: f.keys[0].APIKey, Timestamp: f.start, Model: "priced-model", InputTokens: 1000000, TotalTokens: 1000000, CostUSD: &standardCost, CostAvailable: &available},
 		{ID: 107, AuthIndex: "", APIGroupKey: "unknown-unattributed", Timestamp: f.start, Model: "unpriced", InputTokens: 1000000},
 	}
 	if err := f.db.Create(&events).Error; err != nil {
@@ -89,18 +87,6 @@ func newBillingFixture(t *testing.T) *billingFixture {
 		t.Fatal(err)
 	}
 	return f
-}
-
-func billingTestCatalog(t *testing.T, multiplier float64) *pricing.Catalog {
-	t.Helper()
-	snapshot, err := pricing.CompileSnapshot([]pricing.ModelConfig{{
-		Pricing: entities.ModelPriceSetting{Model: "priced-model", PromptPricePer1M: 1, CompletionPricePer1M: 2, CacheReadPricePer1M: .5, CacheWritePricePer1M: 1.5, PriceMultiplier: &multiplier},
-		Rules:   []pricing.RuleConfig{{Key: "response_service_tier", Value: "priority", Multiplier: 2}},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return pricing.NewCatalog(snapshot)
 }
 
 func (f *billingFixture) close(t *testing.T) {
@@ -127,7 +113,7 @@ func (f *billingFixture) close(t *testing.T) {
 	}
 }
 
-func TestBillingExactWindowArchivesAliasesAndSnapshots(t *testing.T) {
+func TestBillingExactWindowStoredCostsAndSnapshots(t *testing.T) {
 	f := newBillingFixture(t)
 	ctx := context.Background()
 	f.request.FeeNote = "subscription " + f.keys[0].APIKey
@@ -155,14 +141,18 @@ func TestBillingExactWindowArchivesAliasesAndSnapshots(t *testing.T) {
 	if err != nil || len(accounts) != 2 || accounts[1].AuthIndex != "account-b" {
 		t.Fatalf("auth-file accounts should include deleted accounts but not providers: %+v, %v", accounts, err)
 	}
-	// Display metadata and prices change, but listing must return the same saved calculation.
+	// Metadata and stored usage costs change, but listing retains the saved calculation.
 	if err := f.db.Model(&entities.UsageIdentity{}).Where("identity = ?", "account-a").Updates(map[string]any{"name": "Renamed account", "plan_type": "new plan"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	f.catalog.Replace(billingTestCatalog(t, 2).Snapshot())
+	for _, model := range []any{&entities.UsageEvent{}, &entities.UsageEventArchive{}} {
+		if err := f.db.Model(model).Where("auth_index = ?", "account-a").UpdateColumn("cost_usd", gorm.Expr("cost_usd * 2")).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	saved, err := f.service.ListBillingBills(ctx, "account-a")
 	if err != nil || len(saved) != 1 || !reflect.DeepEqual(saved[0], bill) {
-		t.Fatalf("live metadata/prices changed the snapshot: %+v, %v", saved, err)
+		t.Fatalf("live metadata/usage costs changed the snapshot: %+v, %v", saved, err)
 	}
 	f.request.Fee = "2.50"
 	recalculated, err := f.service.SaveBillingBill(ctx, f.request)
@@ -177,7 +167,7 @@ func TestBillingExactWindowArchivesAliasesAndSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.service = NewBillingService(f.db, pricing.NewCatalog(pricing.EmptySnapshot()))
+	f.service = NewBillingService(f.db)
 	reloaded, err := f.service.ListBillingBills(ctx, "account-a")
 	if err != nil || len(reloaded) != 1 || !reflect.DeepEqual(reloaded[0], recalculated) {
 		t.Fatalf("restart did not restore the canonical snapshot without live prices: %+v, %v", reloaded, err)
@@ -201,17 +191,19 @@ func TestBillingFailurePreservesOldBillAndIsolatesCycles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	zeroCost, available, unavailable := 0.0, true, false
 	for _, bad := range []struct {
-		name, key, model string
-		tokens           int64
-		failed           bool
+		name, key string
+		cost      *float64
+		available *bool
 	}{
-		{"unknown member", "unknown-participant", "priced-model", 1, false},
-		{"unpriced model", f.keys[0].APIKey, "not-configured", 1, false},
-		{"unpriced zero-token failure", f.keys[0].APIKey, "not-configured", 0, true},
+		{"unknown member", "unknown-participant", &zeroCost, &available},
+		{"unavailable cost", f.keys[0].APIKey, &zeroCost, &unavailable},
+		{"missing cost", f.keys[0].APIKey, nil, &available},
+		{"missing availability", f.keys[0].APIKey, &zeroCost, nil},
 	} {
 		t.Run(bad.name, func(t *testing.T) {
-			event := entities.UsageEvent{AuthIndex: "account-a", APIGroupKey: bad.key, Model: bad.model, Timestamp: f.start.Add(time.Second), InputTokens: bad.tokens, Failed: bad.failed}
+			event := entities.UsageEvent{AuthIndex: "account-a", APIGroupKey: bad.key, Timestamp: f.start.Add(time.Second), InputTokens: 1, CostUSD: bad.cost, CostAvailable: bad.available}
 			if err := f.db.Create(&event).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -250,7 +242,8 @@ func TestBillingFailurePreservesOldBillAndIsolatesCycles(t *testing.T) {
 	if err := f.db.Delete(&entities.UsageEvent{}, 105).Error; err != nil {
 		t.Fatal(err)
 	}
-	event := entities.UsageEvent{AuthIndex: "account-a", APIGroupKey: f.keys[0].APIKey, Model: "priced-model", Timestamp: f.end, InputTokens: 1000000, TotalTokens: 1000000}
+	cost := 1.0
+	event := entities.UsageEvent{AuthIndex: "account-a", APIGroupKey: f.keys[0].APIKey, Model: "priced-model", Timestamp: f.end, InputTokens: 1000000, TotalTokens: 1000000, CostUSD: &cost, CostAvailable: &available}
 	if err := f.db.Create(&event).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +317,7 @@ func TestBillingMigratesExistingDatabaseWithoutChangingUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.service = NewBillingService(f.db, f.catalog)
+	f.service = NewBillingService(f.db)
 	bill, err := f.service.SaveBillingBill(context.Background(), f.request)
 	if err != nil || bill.Events != 3 || bill.TotalCostUSD != 4 {
 		t.Fatalf("existing database migration lost usage: %+v %v", bill, err)
