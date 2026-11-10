@@ -216,8 +216,7 @@ describe('UsagePage complete pricing integration', () => {
     await act(async () => root.render(<UsagePage />))
     expect(api.fetchPricingModels).not.toHaveBeenCalled()
     expect(api.fetchAvailableModels).not.toHaveBeenCalled()
-    const links = [...container.querySelectorAll('a')]
-    expect(links.findIndex((link) => link.textContent === 'Models')).toBe(links.findIndex((link) => link.textContent === 'Settings') - 1)
+    expect(container.querySelector('section[aria-label="Model Pricing Settings"]')).toBeNull()
     await act(async () => container.querySelector<HTMLAnchorElement>('a[href^="/models"]')!.click())
     expect(container.querySelector('section[aria-label="Models"] [aria-busy="true"]')).not.toBeNull()
     expect(container.querySelector('section[aria-label="Model Pricing Settings"]')?.textContent).toContain(i18n.t('common.loading'))
