@@ -122,7 +122,8 @@ describe('BillingPage snapshot lifecycle', () => {
     expect(await blob.text()).not.toContain('Changed in another session');
   });
 
-  it('requires confirmation before deletion and preserves the snapshot when deletion fails', async () => {
+  it('confirms deletion of a linked credential bill, preserves it on failure, and removes it from the selected account on success', async () => {
+    api.fetchBillingBills.mockResolvedValue({ bills: [{ ...saved, auth_index: 'replaced-credential' }] });
     await render();
     api.deleteBillingBill.mockRejectedValue(new Error('Delete rejected'));
     await act(async () => button('Delete').click());
@@ -132,5 +133,11 @@ describe('BillingPage snapshot lifecycle', () => {
     await act(async () => button('Delete', document.querySelector('[role="dialog"]')!).click());
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('Delete rejected');
     expect(container.querySelector('table')?.textContent).toContain('Participant A');
+    expect(api.deleteBillingBill).toHaveBeenCalledWith(saved.id);
+    api.deleteBillingBill.mockResolvedValue(undefined);
+    await act(async () => button('Delete', container).click());
+    await act(async () => button('Delete', document.querySelector('[role="dialog"]')!).click());
+    expect(container.textContent).toContain(i18n.t('billing.deleted'));
+    expect(container.querySelector('table')).toBeNull();
   });
 });

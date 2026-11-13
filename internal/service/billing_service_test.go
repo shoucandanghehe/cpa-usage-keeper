@@ -184,6 +184,99 @@ func TestBillingExactWindowStoredCostsAndSnapshots(t *testing.T) {
 	}
 }
 
+func TestBillingContinuesAcrossCredentialReplacement(t *testing.T) {
+	f := newBillingFixture(t)
+	ctx := context.Background()
+	original, err := f.service.SaveBillingBill(ctx, f.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := "stable-subscription-account"
+	if err := f.db.Model(&entities.UsageIdentity{}).Where("identity = ?", "account-a").
+		Updates(map[string]any{"provider": "codex", "account_id": accountID, "is_deleted": true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	identities := []entities.UsageIdentity{
+		{AuthType: entities.UsageIdentityAuthTypeCredential, Identity: "account-a-new", Name: "Renewed Account A", Provider: "codex", AccountID: &accountID, ActiveStart: &f.end},
+		{AuthType: entities.UsageIdentityAuthTypeCredential, Identity: "other-provider", Name: "Renewed Account A", Provider: "other", AccountID: &accountID},
+		{AuthType: entities.UsageIdentityAuthTypeCredential, Identity: "unidentified", Name: "Renewed Account A", Provider: "codex"},
+	}
+	if err := f.db.Create(&identities).Error; err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := f.service.ListBillingAccounts(ctx)
+	if err != nil || len(accounts) != 4 {
+		t.Fatalf("replacement should share one account without merging other providers or names: %+v %v", accounts, err)
+	}
+	var linked dto.BillingAccount
+	for _, account := range accounts {
+		if account.AuthIndex == "account-a" {
+			linked = account
+		}
+		if account.AuthIndex == "account-a-new" {
+			t.Fatal("replacement appeared as a separate billing account")
+		}
+	}
+	if linked.Name != "Renewed Account A" || linked.ActiveStart == nil || !linked.ActiveStart.Equal(f.end) {
+		t.Fatalf("linked account lost current credential metadata: %+v", linked)
+	}
+	saved, err := f.service.ListBillingBills(ctx, "account-a-new")
+	if err != nil || len(saved) != 1 || !reflect.DeepEqual(saved[0], original) {
+		t.Fatalf("replacement did not retain the original snapshot: %+v %v", saved, err)
+	}
+	if err := f.db.Delete(&entities.UsageEvent{}, 105).Error; err != nil {
+		t.Fatal(err)
+	}
+	one, three, available := 1.0, 3.0, true
+	events := []entities.UsageEvent{
+		{ID: 201, AuthIndex: "account-a", APIGroupKey: f.keys[0].APIKey, Timestamp: f.end, CostUSD: &one, CostAvailable: &available},
+		{ID: 202, AuthIndex: "account-a-new", APIGroupKey: f.keys[1].APIKey, Timestamp: f.end.Add(time.Second), CostUSD: &three, CostAvailable: &available},
+		{ID: 203, AuthIndex: "other-provider", APIGroupKey: "not-a-participant", Timestamp: f.end},
+		{ID: 204, AuthIndex: "unidentified", APIGroupKey: "not-a-participant", Timestamp: f.end},
+	}
+	if err := f.db.Create(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Exec("INSERT INTO usage_events_archive (" + entities.UsageEventStorageColumns + ") SELECT " + entities.UsageEventStorageColumns + " FROM usage_events WHERE id = 201").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.Delete(&entities.UsageEvent{}, 201).Error; err != nil {
+		t.Fatal(err)
+	}
+	request := f.request
+	request.AuthIndex, request.Cycle, request.Fee = "account-a-new", 2, "4.00"
+	request.WindowStart = f.end.Format(time.RFC3339Nano)
+	request.WindowEnd = f.end.Add(2 * time.Second).Format(time.RFC3339Nano)
+	bill, err := f.service.SaveBillingBill(ctx, request)
+	if err != nil || bill.AuthIndex != "account-a" || bill.Cycle != 2 || bill.Events != 2 || bill.TotalCostUSD != 4 {
+		t.Fatalf("new cycle omitted old/archive or replacement usage: %+v %v", bill, err)
+	}
+	amounts := make(map[int64]int64)
+	for _, member := range bill.Members {
+		amounts[member.APIKeyID] = member.AmountCents
+	}
+	if len(bill.Members) != 2 || amounts[f.keys[0].ID] != 100 || amounts[f.keys[1].ID] != 300 {
+		t.Fatalf("linked account allocations changed: %+v", bill.Members)
+	}
+	for _, authIndex := range []string{"account-a", "account-a-new"} {
+		listed, err := f.service.ListBillingBills(ctx, authIndex)
+		if err != nil || len(listed) != 2 || listed[0].ID != bill.ID || !reflect.DeepEqual(listed[1], original) {
+			t.Fatalf("%s did not continue the original cycles unchanged: %+v %v", authIndex, listed, err)
+		}
+	}
+	request.Cycle = 3
+	if _, err := f.service.SaveBillingBill(ctx, request); !errors.Is(err, repository.ErrBillingOverlap) {
+		t.Fatalf("replacement bypassed linked account overlap protection: %v", err)
+	}
+	request = f.request
+	request.AuthIndex = "account-a-new"
+	request.Fee = "2.00"
+	updated, err := f.service.SaveBillingBill(ctx, request)
+	if err != nil || updated.ID != original.ID || updated.AuthIndex != original.AuthIndex || updated.FeeCents != 200 {
+		t.Fatalf("explicit recalculation created a duplicate original cycle: %+v %v", updated, err)
+	}
+}
+
 func TestBillingFailurePreservesOldBillAndIsolatesCycles(t *testing.T) {
 	f := newBillingFixture(t)
 	ctx := context.Background()

@@ -15,14 +15,8 @@ var ErrBillingOverlap = errors.New("billing window overlaps another cycle for th
 func ListBillingAccountIdentities(db *gorm.DB) ([]entities.UsageIdentity, error) {
 	rows := []entities.UsageIdentity{}
 	err := db.Where("auth_type = ? AND identity <> ''", entities.UsageIdentityAuthTypeCredential).
-		Order("identity asc").Find(&rows).Error
+		Order("id asc").Find(&rows).Error
 	return rows, err
-}
-
-func FindBillingAccountIdentity(db *gorm.DB, authIndex string) (entities.UsageIdentity, error) {
-	var row entities.UsageIdentity
-	err := db.Where("auth_type = ? AND identity = ?", entities.UsageIdentityAuthTypeCredential, authIndex).Take(&row).Error
-	return row, err
 }
 
 func ListBillingAPIKeys(db *gorm.DB) ([]entities.CPAAPIKey, error) {
@@ -32,9 +26,9 @@ func ListBillingAPIKeys(db *gorm.DB) ([]entities.CPAAPIKey, error) {
 	return rows, err
 }
 
-func ListBillingBills(db *gorm.DB, authIndex string) ([]entities.BillingBill, error) {
+func ListBillingBills(db *gorm.DB, authIndices []string) ([]entities.BillingBill, error) {
 	rows := []entities.BillingBill{}
-	err := db.Where("auth_index = ?", authIndex).Order("cycle desc").Find(&rows).Error
+	err := db.Where("auth_index IN ?", authIndices).Order("cycle desc").Find(&rows).Error
 	return rows, err
 }
 
@@ -49,24 +43,26 @@ func ListLatestBillingBills(db *gorm.DB) ([]entities.BillingBill, error) {
 
 // SaveBillingBillSnapshot requires the caller's transaction to include the usage
 // read and calculation. Overlap validation and replacement share that snapshot.
-func SaveBillingBillSnapshot(tx *gorm.DB, row *entities.BillingBill) error {
+func SaveBillingBillSnapshot(tx *gorm.DB, authIndices []string, row *entities.BillingBill) error {
 	var overlaps int64
 	if err := tx.Model(&entities.BillingBill{}).
-		Where("auth_index = ? AND cycle <> ? AND window_start < ? AND window_end > ?",
-			row.AuthIndex, row.Cycle, row.WindowEnd, row.WindowStart).Count(&overlaps).Error; err != nil {
+		Where("auth_index IN ? AND cycle <> ? AND window_start < ? AND window_end > ?",
+			authIndices, row.Cycle, row.WindowEnd, row.WindowStart).Count(&overlaps).Error; err != nil {
 		return err
 	}
 	if overlaps != 0 {
 		return ErrBillingOverlap
 	}
-	var existing entities.BillingBill
-	err := tx.Where("auth_index = ? AND cycle = ?", row.AuthIndex, row.Cycle).Take(&existing).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	var existing []entities.BillingBill
+	if err := tx.Where("auth_index IN ? AND cycle = ?", authIndices, row.Cycle).Find(&existing).Error; err != nil {
 		return err
 	}
-	if err == nil {
-		row.ID = existing.ID
-		return tx.Model(&existing).Select("window_start", "window_end", "snapshot_json").Updates(row).Error
+	if len(existing) > 1 {
+		return fmt.Errorf("%w: linked credentials have multiple saved bills for cycle %d", ErrBillingOverlap, row.Cycle)
+	}
+	if len(existing) == 1 {
+		row.ID, row.AuthIndex = existing[0].ID, existing[0].AuthIndex
+		return tx.Model(&existing[0]).Select("window_start", "window_end", "snapshot_json").Updates(row).Error
 	}
 	return tx.Create(row).Error
 }
@@ -82,14 +78,14 @@ func DeleteBillingBill(db *gorm.DB, id int64) error {
 	return nil
 }
 
-// StreamBillingUsage reads only one account and bounded calendar candidates.
+// StreamBillingUsage reads all credentials of one account and bounded calendar candidates.
 // Stored timestamps have variable fractions/offsets, so SQL's lexical range is
 // only a conservative index filter; Go performs the authoritative [start,end)
 // instant comparison without SQLite's millisecond rounding. A one-day margin
 // covers every RFC3339 offset, including DST and historical project TZ changes.
 // The caller holds one transaction across both hot and archive reads. Archive
 // IDs are copied from hot IDs; hot wins if an ID exists in both tables.
-func StreamBillingUsage(tx *gorm.DB, authIndex string, start, end time.Time, visit func(entities.UsageEvent) error) error {
+func StreamBillingUsage(tx *gorm.DB, authIndices []string, start, end time.Time, visit func(entities.UsageEvent) error) error {
 	lower := start.UTC().Add(-24 * time.Hour).Format("2006-01-02")
 	upper := end.UTC().Add(24*time.Hour).Format("2006-01-02") + "z"
 	if end.UTC().Add(24*time.Hour).Year() > 9999 {
@@ -99,7 +95,7 @@ func StreamBillingUsage(tx *gorm.DB, authIndex string, start, end time.Time, vis
 		reasoning_tokens, cache_read_tokens, total_tokens, cost_usd, cost_available`
 	for _, table := range []string{"usage_events", "usage_events_archive"} {
 		query := tx.Table(table).Select(columns).
-			Where("auth_index = ? AND timestamp >= ? AND timestamp < ?", authIndex, lower, upper).
+			Where("auth_index IN ? AND timestamp >= ? AND timestamp < ?", authIndices, lower, upper).
 			Order("timestamp asc, id asc")
 		if table == "usage_events_archive" {
 			query = query.Where("NOT EXISTS (SELECT 1 FROM usage_events hot WHERE hot.id = usage_events_archive.id)")

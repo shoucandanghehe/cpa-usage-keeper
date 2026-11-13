@@ -204,7 +204,7 @@ export function BillingPage({ active, onAuthRequired, refreshRef, onDownload }: 
   };
 
   const removeBill = async (bill: BillingBill) => {
-    const target = accounts.find((item) => item.auth_index === bill.auth_index);
+    const target = account;
     if (busyRef.current || !target) return;
     busyRef.current = true;
     accountsControllerRef.current?.abort();
@@ -216,19 +216,19 @@ export function BillingPage({ active, onAuthRequired, refreshRef, onDownload }: 
       await deleteBillingBill(bill.id);
       if (!mountedRef.current) return;
       setEntries((current) => {
-        const existing = current[bill.auth_index];
+        const existing = current[target.auth_index];
         const bills = existing.bills.filter((item) => item.id !== bill.id);
         const next = bills[0];
-        return { ...current, [bill.auth_index]: {
+        return { ...current, [target.auth_index]: {
           bills,
           draft: next ? billingDraftFromBill(next) : newBillingDraft(target, bills),
           editingId: next?.id ?? null,
           snapshot: next ?? null,
         } };
       });
-      setNotice({ authIndex: bill.auth_index, message: t('billing.deleted') });
+      setNotice({ authIndex: target.auth_index, message: t('billing.deleted') });
     } catch (error) {
-      if (mountedRef.current) setBillError({ authIndex: bill.auth_index, message: errorMessage(error) });
+      if (mountedRef.current) setBillError({ authIndex: target.auth_index, message: errorMessage(error) });
     } finally {
       busyRef.current = false;
       if (mountedRef.current) { setBusy(null); setConfirmation(null); }

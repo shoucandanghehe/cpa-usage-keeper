@@ -48,10 +48,51 @@ func NewBillingService(db *gorm.DB) BillingProvider {
 	return &billingService{db: db}
 }
 
+type billingAccountGroup struct {
+	identity    entities.UsageIdentity
+	authIndices []string
+}
+
+func loadBillingAccountGroups(db *gorm.DB) (map[string]*billingAccountGroup, error) {
+	identities, err := repository.ListBillingAccountIdentities(db)
+	if err != nil {
+		return nil, err
+	}
+	type accountKey struct {
+		provider  string
+		accountID string
+	}
+	byAccount := make(map[accountKey]*billingAccountGroup)
+	byAuthIndex := make(map[string]*billingAccountGroup, len(identities))
+	for _, identity := range identities {
+		var group *billingAccountGroup
+		key := accountKey{provider: identity.Provider}
+		if identity.AccountID != nil {
+			key.accountID = *identity.AccountID
+		}
+		if key.provider != "" && key.accountID != "" {
+			group = byAccount[key]
+		}
+		if group == nil {
+			group = &billingAccountGroup{identity: identity}
+			if key.provider != "" && key.accountID != "" {
+				byAccount[key] = group
+			}
+		} else if group.identity.IsDeleted || !identity.IsDeleted {
+			// Prefer live credential metadata; within the same state use the newest identity.
+			group.identity = identity
+		}
+		// Identities arrive oldest first, keeping the original billing account key.
+		group.authIndices = append(group.authIndices, identity.Identity)
+		byAuthIndex[identity.Identity] = group
+	}
+	return byAuthIndex, nil
+}
+
 func (s *billingService) ListBillingAccounts(ctx context.Context) ([]dto.BillingAccount, error) {
 	accounts := []dto.BillingAccount{}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		identities, err := repository.ListBillingAccountIdentities(tx)
+		groups, err := loadBillingAccountGroups(tx)
 		if err != nil {
 			return err
 		}
@@ -60,10 +101,13 @@ func (s *billingService) ListBillingAccounts(ctx context.Context) ([]dto.Billing
 			return err
 		}
 		redact := billingRedactor(keys)
-		seen := make(map[string]bool, len(identities))
-		for _, identity := range identities {
-			accounts = append(accounts, billingAccount(identity, redact))
-			seen[identity.Identity] = true
+		for authIndex, group := range groups {
+			if authIndex != group.authIndices[0] {
+				continue
+			}
+			account := billingAccount(group.identity, redact)
+			account.AuthIndex = authIndex
+			accounts = append(accounts, account)
 		}
 		// A physically removed identity must not hide its saved bills. These
 		// fallback names are already redacted snapshots, not live metadata.
@@ -72,7 +116,7 @@ func (s *billingService) ListBillingAccounts(ctx context.Context) ([]dto.Billing
 			return err
 		}
 		for _, row := range latest {
-			if seen[row.AuthIndex] {
+			if _, exists := groups[row.AuthIndex]; exists {
 				continue
 			}
 			bill, err := decodeBillingBill(row)
@@ -95,14 +139,21 @@ func (s *billingService) ListBillingBills(ctx context.Context, authIndex string)
 	}
 	bills := []dto.BillingBill{}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		rows, err := repository.ListBillingBills(tx, authIndex)
+		groups, err := loadBillingAccountGroups(tx)
 		if err != nil {
 			return err
 		}
-		if len(rows) == 0 {
-			if _, err := repository.FindBillingAccountIdentity(tx, authIndex); err != nil {
-				return err
-			}
+		group := groups[authIndex]
+		authIndices := []string{authIndex}
+		if group != nil {
+			authIndices = group.authIndices
+		}
+		rows, err := repository.ListBillingBills(tx, authIndices)
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 && group == nil {
+			return gorm.ErrRecordNotFound
 		}
 		for _, row := range rows {
 			bill, err := decodeBillingBill(row)
@@ -123,22 +174,26 @@ func (s *billingService) SaveBillingBill(ctx context.Context, request dto.SaveBi
 	}
 	var bill dto.BillingBill
 	err = s.db.WithContext(ctx).Clauses(dbresolver.Write).Transaction(func(tx *gorm.DB) error {
-		identity, err := repository.FindBillingAccountIdentity(tx, request.AuthIndex)
+		groups, err := loadBillingAccountGroups(tx)
 		if err != nil {
 			return err
+		}
+		group := groups[request.AuthIndex]
+		if group == nil {
+			return gorm.ErrRecordNotFound
 		}
 		keys, err := repository.ListBillingAPIKeys(tx)
 		if err != nil {
 			return err
 		}
 		redact := billingRedactor(keys)
-		account := billingAccount(identity, redact)
-		members, events, total, err := calculateBillingUsage(tx, keys, redact, request.AuthIndex, start, end, fee)
+		account := billingAccount(group.identity, redact)
+		members, events, total, err := calculateBillingUsage(tx, keys, redact, group.authIndices, start, end, fee)
 		if err != nil {
 			return err
 		}
 		bill = dto.BillingBill{
-			AuthIndex: request.AuthIndex, Cycle: request.Cycle, WindowStart: start, WindowEnd: end,
+			AuthIndex: group.authIndices[0], Cycle: request.Cycle, WindowStart: start, WindowEnd: end,
 			BillingSnapshot: dto.BillingSnapshot{
 				Account: account.Name, Alias: account.Alias, Plan: account.Plan,
 				FeeCents: fee, FeeNote: redact(request.FeeNote), CalculatedAt: time.Now().UTC(),
@@ -150,14 +205,14 @@ func (s *billingService) SaveBillingBill(ctx context.Context, request dto.SaveBi
 			return err
 		}
 		row := entities.BillingBill{
-			AuthIndex: request.AuthIndex, Cycle: request.Cycle,
+			AuthIndex: bill.AuthIndex, Cycle: request.Cycle,
 			WindowStart: timeutil.FormatSortableStorageTime(start), WindowEnd: timeutil.FormatSortableStorageTime(end),
 			SnapshotJSON: string(payload),
 		}
-		if err := repository.SaveBillingBillSnapshot(tx, &row); err != nil {
+		if err := repository.SaveBillingBillSnapshot(tx, group.authIndices, &row); err != nil {
 			return err
 		}
-		bill.ID = row.ID
+		bill.ID, bill.AuthIndex = row.ID, row.AuthIndex
 		return nil
 	})
 	if err != nil {
@@ -277,14 +332,14 @@ type billingAccumulator struct {
 	costUnits    int64
 }
 
-func calculateBillingUsage(tx *gorm.DB, keys []entities.CPAAPIKey, redact func(string) string, authIndex string, start, end time.Time, fee int64) ([]dto.BillingMember, int64, float64, error) {
+func calculateBillingUsage(tx *gorm.DB, keys []entities.CPAAPIKey, redact func(string) string, authIndices []string, start, end time.Time, fee int64) ([]dto.BillingMember, int64, float64, error) {
 	byKey := make(map[string]entities.CPAAPIKey, len(keys))
 	for _, key := range keys {
 		byKey[key.APIKey] = key
 	}
 	byMember := make(map[int64]*billingAccumulator)
 	var events int64
-	err := repository.StreamBillingUsage(tx, authIndex, start, end, func(event entities.UsageEvent) error {
+	err := repository.StreamBillingUsage(tx, authIndices, start, end, func(event entities.UsageEvent) error {
 		key, known := byKey[event.APIGroupKey]
 		if event.APIGroupKey == "" || !known || key.ID <= 0 || key.ID > billingMaxSafeInteger {
 			return fmt.Errorf("%w: an event has no known participant API key; sync key metadata before saving", ErrBillingIncomplete)
